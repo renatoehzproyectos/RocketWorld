@@ -1,0 +1,197 @@
+import { geodeticToECEF, enuBasis, moveGeodetic, rad } from './geo.js';
+// Runtime 3D Tiles propio (1.0/1.1): bounding volumes box/sphere/region, SSE por geometricError, refinamiento REPLACE/ADD,
+// tilesets externos, glb/b3dm/cmpt (+Draco), cola priorizada con concurrencia limitada, caché LRU y origen flotante ENU.
+const V3 = THREE.Vector3, Y2Z = new THREE.Matrix4().makeRotationX(Math.PI / 2), DOWN = new V3(0, -1, 0);
+const dirScale = (e, x, y, z, o) => o.set(e[0] * x + e[4] * y + e[8] * z, e[1] * x + e[5] * y + e[9] * z, e[2] * x + e[6] * y + e[10] * z);
+const isJson = u => /\.json(\?|$)/i.test(u || '');
+
+export class Tileset3D {
+  constructor(scene, camera, o = {}) {
+    Object.assign(this, { scene, camera, maxSSE: o.sse ?? 16, maxTiles: o.maxTiles ?? 300, maxReq: o.maxReq ?? 6 });
+    this.root = new THREE.Group(); scene.add(this.root);
+    this.anchor = { lat: 0, lon: 0, h: 0 }; this.P0 = new V3(); this.M = new THREE.Matrix4(); this._T = new THREE.Matrix4();
+    this.frame = 0; this.loaded = new Set(); this.queue = []; this.active = 0; this.sel = []; this.rootTile = null;
+    this.vOff = 0; this.hasGround = false; this.disposed = false; this.copyright = ''; this.lastError = '';
+    this.frustum = new THREE.Frustum(); this._pm = new THREE.Matrix4(); this._c = new V3(); this._c2 = new V3(); this._s = new THREE.Sphere(); this.k = 1000;
+    this.gltf = new THREE.GLTFLoader(); this.ray = new THREE.Raycaster();
+    if (THREE.DRACOLoader) { this.draco = new THREE.DRACOLoader(); this.draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/draco/gltf/'); this.gltf.setDRACOLoader(this.draco); }
+  }
+  // ---------- arranque ----------
+  async init(cfg) {
+    this.setAnchor(cfg.lat * rad, cfg.lon * rad, 0);
+    let url;
+    if (cfg.provider === 'google') { this.key = cfg.key; url = 'https://tile.googleapis.com/v1/3dtiles/root.json'; }
+    else {
+      const id = cfg.provider === 'ion-osm' ? 96188 : cfg.provider === 'ion-google' ? 2275207 : cfg.asset;
+      const r = await fetch(`https://api.cesium.com/v1/assets/${id}/endpoint?access_token=${encodeURIComponent(cfg.key)}`);
+      if (!r.ok) throw new Error(`Cesium ion respondió HTTP ${r.status}: revisa el token y que el asset ${id} esté en tu cuenta`);
+      const ep = await r.json(); this.token = ep.accessToken; url = ep.url;
+    }
+    const json = await this.fetchJSON(url);
+    if (!json.root) throw new Error('tileset.json sin "root"');
+    this.rootTile = this.makeTile(json.root, null, url);
+  }
+  auth(u) {
+    const x = new URL(u, location.href);
+    if (x.hostname === 'tile.googleapis.com' && this.key && !x.searchParams.has('key')) x.searchParams.set('key', this.key);
+    if (this.token && x.hostname.endsWith('cesium.com') && !x.searchParams.has('access_token')) x.searchParams.set('access_token', this.token);
+    return x.href;
+  }
+  async fetchJSON(url) {
+    const r = await fetch(this.auth(url));
+    if (!r.ok) throw new Error(r.status === 403 || r.status === 401 ? `HTTP ${r.status}: clave/token inválido o API no habilitada (Google: "Map Tiles API")` : `HTTP ${r.status}`);
+    return r.json();
+  }
+  // ---------- árbol ----------
+  makeTile(j, parent, baseUrl) {
+    const local = j.transform ? new THREE.Matrix4().fromArray(j.transform) : new THREE.Matrix4();
+    const uri = j.content?.uri ?? j.content?.url, abs = uri ? new URL(uri, new URL(baseUrl, location.href)).href : null;
+    const t = { parent, children: [], uri: abs, external: !!abs && isJson(abs), state: 0, queued: false, ge: j.geometricError ?? 0, selFrame: -1,
+      refine: (j.refine || parent?.refine || 'REPLACE').toUpperCase(), world: parent ? parent.world.clone().multiply(local) : local, center: new V3(), radius: 0,
+      holder: null, meshes: null, bytes: 0, copyright: '', prio: 0, qf: 0, retryAt: 0 };
+    this.bound(t, j.boundingVolume);
+    for (const c of j.children || []) t.children.push(this.makeTile(c, t, baseUrl));
+    return t;
+  }
+  bound(t, bv) {
+    const e = t.world.elements, c = t.center;
+    if (bv?.box) {
+      const b = bv.box, u = dirScale(e, b[3], b[4], b[5], new V3()), v = dirScale(e, b[6], b[7], b[8], new V3()), w = dirScale(e, b[9], b[10], b[11], new V3());
+      c.set(b[0], b[1], b[2]).applyMatrix4(t.world); t.radius = Math.sqrt(u.lengthSq() + v.lengthSq() + w.lengthSq());
+    } else if (bv?.sphere) {
+      const s = bv.sphere; c.set(s[0], s[1], s[2]).applyMatrix4(t.world);
+      t.radius = s[3] * Math.max(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10]));
+    } else if (bv?.region) {
+      const [w, s, ea, n, h0, h1] = bv.region; geodeticToECEF((s + n) / 2, (w + ea) / 2, (h0 + h1) / 2, c); const p = new V3();
+      for (const la of [s, n]) for (const lo of [w, ea]) for (const h of [h0, h1]) t.radius = Math.max(t.radius, c.distanceTo(geodeticToECEF(la, lo, h, p)));
+    } else if (t.parent) { c.copy(t.parent.center); t.radius = t.parent.radius; }
+  }
+  // ---------- marco local (origen flotante) ----------
+  setAnchor(lat, lon, h) { Object.assign(this.anchor, { lat, lon, h }); this.rebase(); }
+  shift(dE, dN) { moveGeodetic(this.anchor, dE, dN); this.rebase(); }
+  rebase() {
+    const { lat, lon, h } = this.anchor, P = geodeticToECEF(lat, lon, h, this.P0), [E, N, U] = enuBasis(lat, lon);
+    this.M.set(E.x, E.y, E.z, -E.dot(P), U.x, U.y, U.z, -U.dot(P), -N.x, -N.y, -N.z, N.dot(P), 0, 0, 0, 1);   // ECEF -> three (x=E, y=U, z=-N)
+    for (const t of this.loaded) this.place(t);
+  }
+  place(t) {
+    const h = t.holder; h.matrix.copy(this.M).multiply(t.world);
+    const r = h.userData.rtc; if (r) h.matrix.multiply(this._T.makeTranslation(r[0], r[1], r[2]));
+    h.matrix.multiply(Y2Z); h.updateMatrixWorld(true);
+  }
+  setVOff(y) { this.vOff = y; this.root.position.y = y; this.root.updateMatrixWorld(true); }
+  local(t, out) { out.copy(t.center).applyMatrix4(this.M); out.y += this.vOff; return out; }
+  // ---------- recorrido ----------
+  update(renderer) {
+    if (!this.rootTile || this.disposed) return;
+    const f = ++this.frame, cam = this.camera;
+    this._pm.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); this.frustum.setFromProjectionMatrix(this._pm);
+    this.k = renderer.domElement.height / (2 * Math.tan(cam.fov * Math.PI / 360));
+    this.sel.length = 0; this.visit(this.rootTile, f);
+    for (const t of this.loaded) t.holder.visible = t.selFrame === f;
+    this.pump(f);
+    if (f % 30 === 0) { this.evict(f); const set = new Set(); this.sel.forEach(t => t.copyright && t.copyright.split(';').forEach(s => s.trim() && set.add(s.trim()))); this.copyright = [...set].join(' · '); }
+  }
+  inView(t) { const c = this.local(t, this._c2); this._s.center.copy(c); this._s.radius = t.radius; return this.frustum.intersectsSphere(this._s); }
+  dist(t) { return Math.max(this.local(t, this._c2).distanceTo(this.camera.position) - t.radius, 0.01); }
+  visit(t, f) {
+    const c = this.local(t, this._c); this._s.center.copy(c); this._s.radius = t.radius;
+    if (!this.frustum.intersectsSphere(this._s)) return;
+    const dist = Math.max(c.distanceTo(this.camera.position) - t.radius, 0.01), content = !!t.uri && !t.external, kids = t.children;
+    if (t.external && t.state !== 2) { this.request(t, dist, f); return; }
+    const refine = !content || (kids.length > 0 && t.ge * this.k / dist > this.maxSSE);
+    if (!refine || !kids.length) { if (content) this.select(t, dist, f); return; }
+    if (t.refine === 'ADD') { if (content) this.select(t, dist, f); for (const k of kids) this.visit(k, f); return; }
+    if (content && t.state === 2) {
+      let ok = true; for (const k of kids) if (!this.ready(k, 0)) { ok = false; this.prefetch(k, f, 0); }
+      if (!ok) { this.select(t, dist, f); return; }
+    } else if (content) this.request(t, dist, f);
+    for (const k of kids) this.visit(k, f);
+  }
+  select(t, dist, f) { if (t.state === 2) { t.selFrame = f; this.sel.push(t); } else this.request(t, dist, f); }
+  ready(k, d) {
+    if (d > 6 || !this.inView(k)) return true;
+    if (k.external) return k.state === 3 || (k.state === 2 && k.children.every(c => this.ready(c, d + 1)));   // un externo fallido no bloquea al padre
+    if (k.uri) return k.state === 2 || k.state === 3;
+    return k.children.every(c => this.ready(c, d + 1));
+  }
+  prefetch(k, f, d) {
+    if (d > 6 || !this.inView(k)) return;
+    if (k.uri && !(k.external && k.state === 2)) { if (k.state !== 2) this.request(k, this.dist(k), f); if (!k.external) return; }
+    for (const c of k.children) this.prefetch(c, f, d + 1);
+  }
+  // ---------- red ----------
+  request(t, dist, f) {
+    if (t.state === 3 && performance.now() > t.retryAt) t.state = 0;
+    if (t.state !== 0) return; t.prio = dist; t.qf = f;
+    if (!t.queued) { t.queued = true; this.queue.push(t); }
+  }
+  pump(f) {
+    const q = this.queue;
+    for (let i = q.length - 1; i >= 0; i--) if (f - q[i].qf > 5) { q[i].queued = false; q.splice(i, 1); }
+    q.sort((a, b) => a.prio - b.prio);
+    while (this.active < this.maxReq && q.length) { const t = q.shift(); t.queued = false; if (t.state === 0) this.load(t); }
+  }
+  load(t) {
+    t.state = 1; this.active++;
+    fetch(this.auth(t.uri)).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+      .then(buf => this.parse(t, buf))
+      .catch(e => { t.state = 3; t.retryAt = performance.now() + 8000; this.lastError = e.message; console.warn('3D Tiles:', e); })
+      .finally(() => { this.active--; });
+  }
+  extract(buf, out = []) {
+    const dv = new DataView(buf), tag = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+    if (tag === 'glTF') out.push({ glb: buf, rtc: null });
+    else if (tag === 'b3dm') {
+      const fj = dv.getUint32(12, true), fb = dv.getUint32(16, true), bj = dv.getUint32(20, true), bb = dv.getUint32(24, true); let rtc = null;
+      if (fj) { try { rtc = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 28, fj))).RTC_CENTER || null; } catch (_) {} }
+      out.push({ glb: buf.slice(28 + fj + fb + bj + bb), rtc });
+    } else if (tag === 'cmpt') { const n = dv.getUint32(12, true); let off = 16; for (let i = 0; i < n; i++) { const len = dv.getUint32(off + 8, true); this.extract(buf.slice(off, off + len), out); off += len; } }
+    return out;
+  }
+  async parse(t, buf) {
+    if (this.disposed) return;
+    if (new Uint8Array(buf, 0, 1)[0] === 0x7b) {                       // '{' -> tileset externo
+      const json = JSON.parse(new TextDecoder().decode(buf)); if (!json.root) throw new Error('tileset externo sin root');
+      t.children = [this.makeTile(json.root, t, t.uri)]; t.state = 2; return;
+    }
+    const parts = this.extract(buf); if (!parts.length) throw new Error('contenido no soportado');
+    const holder = new THREE.Group(); holder.matrixAutoUpdate = false; holder.visible = false; t.meshes = []; t.bytes = 0;
+    for (const p of parts) {
+      const gltf = await new Promise((res, rej) => this.gltf.parse(p.glb, '', res, rej));
+      if (p.rtc) holder.userData.rtc = p.rtc; if (gltf.asset?.copyright) t.copyright = gltf.asset.copyright;
+      gltf.scene.traverse(o => {                                        // iluminación horneada: MeshBasicMaterial (mucho más barato)
+        if (!o.isMesh) return; const old = o.material, map = old.map || null;
+        o.material = new THREE.MeshBasicMaterial({ map, color: map ? 0xffffff : (old.color || 0xffffff), vertexColors: !!o.geometry.attributes.color, side: old.side });
+        old.dispose && old.dispose(); t.meshes.push(o);
+        for (const a of Object.values(o.geometry.attributes)) t.bytes += a.array.byteLength;
+        if (map?.image?.width) t.bytes += map.image.width * map.image.height * 5.3;
+      });
+      holder.add(gltf.scene);
+    }
+    if (this.disposed) { this.freeHolder(holder, t.meshes); return; }
+    t.holder = holder; this.root.add(holder); t.state = 2; this.loaded.add(t); this.place(t);
+  }
+  // ---------- caché ----------
+  freeHolder(h, meshes) { h.parent && h.parent.remove(h); (meshes || []).forEach(m => { m.geometry.dispose(); m.material.map && m.material.map.dispose(); m.material.dispose(); }); }
+  free(t) { this.freeHolder(t.holder, t.meshes); t.holder = null; t.meshes = null; t.state = 0; this.loaded.delete(t); }
+  evict(f) {
+    if (this.loaded.size <= this.maxTiles) return;
+    const c = [...this.loaded].filter(t => t.selFrame < f - 30).sort((a, b) => a.selFrame - b.selFrame);
+    for (const t of c) { if (this.loaded.size <= this.maxTiles * .9) break; this.free(t); }
+  }
+  // ---------- terreno ----------
+  sampleGround(x, z) {
+    const list = [];
+    for (const t of this.sel) { if (!t.meshes) continue; const c = this.local(t, this._c2); if (Math.hypot(c.x - x, c.z - z) < t.radius + 5) list.push(...t.meshes); }
+    if (!list.length || list.length > 60) return null;
+    let best = null; this.ray.far = 9000;
+    for (const [dx, dz] of [[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]]) {
+      this.ray.set(new V3(x + dx, 4000, z + dz), DOWN); const h = this.ray.intersectObjects(list, false);
+      if (h.length) best = best === null ? h[0].point.y : Math.min(best, h[0].point.y);
+    }
+    return best;
+  }
+  stats() { return { loaded: this.loaded.size, pending: this.queue.length + this.active, visible: this.sel.length }; }
+  dispose() { this.disposed = true; for (const t of [...this.loaded]) this.free(t); this.scene.remove(this.root); this.draco && this.draco.dispose(); }
+}

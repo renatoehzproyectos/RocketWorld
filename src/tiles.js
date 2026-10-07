@@ -54,8 +54,11 @@ export function createTiles(scene, collision, { radius = 8, budget = 3 } = {}) {
     queue.splice(0, n); pending = queue.length;
     pools.forEach(p => p.flush());
   }
+  let enabled = true;
+  const reset = () => { for (const t of tiles.values()) release(t); tiles.clear(); queue.length = 0; lastKey = ''; pending = 0; pools.forEach(p => p.flush()); };
   return {
-    update, prime(ax, az, ox, oz) { update(ax, az, ox, oz, true); },
+    setEnabled(v) { if (v === enabled) return; enabled = v; root.visible = v; if (!v) reset(); },
+    update: (...a) => { if (enabled) update(...a); }, prime(ax, az, ox, oz) { update(ax, az, ox, oz, true); },
     stats: () => ({ tiles: tiles.size, pending, houses: bodies.used, palms: palms.used }),
   };
 }

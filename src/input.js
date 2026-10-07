@@ -3,6 +3,7 @@ export function createInput() {
   const keys = new Set(), mob = { jx: 0, jy: 0, joy: false, jump: false, boost: false, slide: false, rl: false, rr: false };
   let camToggle = false, resetReq = false;
   addEventListener('keydown', e => {
+    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
     if (e.repeat) return; keys.add(e.code);
     if (e.code === 'KeyC') camToggle = true;
     if (e.code === 'KeyR') resetReq = true;

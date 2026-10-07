@@ -18,6 +18,13 @@ Q/E air-roll · C cámara chase/aérea · R reiniciar. En móvil: joystick + bot
 - `src/collision.js` — colisión por tile (solo LOD0), separada del visual.
 - `src/camera.js`, `src/input.js`, `src/vehicle.js`.
 
+## Mundo real 3D Tiles (v0.3)
+Botón ⚙ → elige fuente (Google Photorealistic 3D Tiles con API key de Google Maps, o Cesium ion con token), pega la clave y pulsa Aplicar.
+- `src/tileset.js` — runtime 3D Tiles propio: box/sphere/region, SSE, REPLACE/ADD, tilesets externos, glb/b3dm/cmpt + Draco, cola priorizada, caché LRU, materiales Basic (luz horneada), origen flotante ENU.
+- `src/geo.js` — WGS84 / ENU. Sin clave se usa la ciudad procedural.
+- Google exige mostrar atribución (se muestra abajo a la derecha) y su logotipo según sus términos.
+
 ## Limitaciones
 - El techo de RocketSim (~41 m) sigue activo: está dentro del WASM. Quitarlo requiere recompilar RocketSim sin arena.
-- No es Cesium/3D Tiles real todavía: es un runtime propio con la misma filosofía; falta el cargador de tileset.json.
+- Con 3D Tiles reales no hay colisión con edificios (la malla fotogramétrica no es sólida para RocketSim): el coche conduce sobre un plano y el mundo sube/baja bajo él ("seguir el terreno").
+- Probado en Node con tilesets sintéticos; no con servidores reales de Google/Cesium ni en navegador.

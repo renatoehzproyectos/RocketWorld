@@ -6,6 +6,8 @@ import { createCollision } from './collision.js';
 import { createTiles } from './tiles.js';
 import { createTerrain } from './terrain.js';
 import { createCamera } from './camera.js';
+import { Tileset3D } from './tileset.js';
+import { initSettings } from './settings.js';
 
 const $ = id => document.getElementById(id), status = t => $('status').textContent = t;
 const rot9 = r => { const a = new Array(9); for (let i = 0; i < 9; i++) a[i] = r.get(i); return a; };
@@ -35,6 +37,26 @@ async function boot() {
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(1.7, 16), new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: .35, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6 }));
   shadow.rotation.x = -Math.PI / 2; scene.add(shadow);
 
+  // ---- Modo 3D Tiles (API key en Ajustes) o ciudad procedural
+  let ts = null, follow = true, groundT = 0, vTarget = 0, cfg = null;
+  const attrib = $('attrib');
+  const setProc = () => {
+    tiles.setEnabled(true); terrain.setGroundVisible(true); camera.near = 0.3; camera.far = 1400; camera.updateProjectionMatrix();
+    scene.fog.near = 140; scene.fog.far = 620; attrib.textContent = '';
+  };
+  const applySettings = async s => {
+    if (ts) { ts.dispose(); ts = null; }
+    cfg = s;
+    if (!s.key || (s.provider === 'ion-custom' && !s.asset)) { setProc(); return; }
+    tiles.setEnabled(false); terrain.setGroundVisible(false);
+    camera.near = 0.5; camera.far = 15000; camera.updateProjectionMatrix(); scene.fog.near = 2500; scene.fog.far = 12000;
+    follow = s.follow; vTarget = 0;
+    const t = new Tileset3D(scene, camera, { sse: s.sse, maxTiles: coarse ? 200 : 380, maxReq: coarse ? 4 : 8 });
+    try { await t.init(s); ts = t; ui.status('Conectado. Cargando tiles…'); }
+    catch (e) { console.error(e); t.dispose(); setProc(); ui.status('Error: ' + e.message + '\nMostrando ciudad procedural.', true); }
+  };
+  const ui = initSettings(s => applySettings(s), coarse);
+
   // Origen flotante: abs(three, m) = local + origin. RocketSim siempre trabaja cerca del centro de la arena.
   let ox = 0, oz = 0;
   const carPrev = new THREE.Vector3(), carCurr = new THREE.Vector3(), carPos = new THREE.Vector3(), qPrev = new THREE.Quaternion(), qCurr = new THREE.Quaternion(), vel3 = new THREE.Vector3();
@@ -44,6 +66,8 @@ async function boot() {
   const topAt = (x, z) => collision.topAt((x + ox) * 50, -(z + oz) * 50);
   readCurr(); readQ(); carPrev.copy(carCurr); qPrev.copy(qCurr);
   tiles.prime(carCurr.x + ox, carCurr.z + oz, ox, oz);     // mundo inicial completo antes del primer frame
+
+  if (ui.get().key) applySettings(ui.get());
 
   let acc = 0, last = performance.now(), hudT = 0, perfT = 0, ema = 16, clock = 0;
   const hud = $('hud');
@@ -75,6 +99,7 @@ async function boot() {
       if (sx || sy) {
         p.x -= sx; p.y -= sy; ox += sx * UU_TO_M; oz -= sy * UU_TO_M; dirty = true;
         const dx = -sx * UU_TO_M, dz = sy * UU_TO_M; carPrev.x += dx; carPrev.z += dz; camCtl.shift(dx, dz);
+        if (ts) ts.shift(sx * UU_TO_M, sy * UU_TO_M);          // RS x = Este, RS y = Norte
       }
       if (dirty) RS.setCarState(carId, p.x, p.y, p.z, v.x, v.y, v.z);
       const prevKeep = carCurr.clone(); if (sx || sy) { prevKeep.x += -sx * UU_TO_M; prevKeep.z += sy * UU_TO_M; }
@@ -89,13 +114,24 @@ async function boot() {
     rsToThree(st.vel.x, st.vel.y, st.vel.z, vel3); vel3.multiplyScalar(50);
     camCtl.update(dt, carPos, q, vel3, speedUU * UU_TO_M, st.isOnGround, topAt);
     camera.updateMatrixWorld();
-    tiles.update(carPos.x + ox, carPos.z + oz, ox, oz); terrain.update(camera, ox, oz, clock);
+    if (ts) {
+      groundT += dt;
+      if (follow && groundT > 0.25) {                       // el suelo plano de RocketSim manda: el mundo sube/baja bajo el coche
+        groundT = 0; const g = ts.sampleGround(carPos.x, carPos.z);
+        if (g !== null) { vTarget = ts.vOff - g; if (!ts.hasGround) { ts.hasGround = true; ts.setVOff(vTarget); } }
+      }
+      if (ts.hasGround) ts.setVOff(ts.vOff + (vTarget - ts.vOff) * (1 - Math.exp(-dt / 0.9)));
+      ts.update(renderer);
+    } else { tiles.update(carPos.x + ox, carPos.z + oz, ox, oz); }
+    terrain.update(camera, ox, oz, clock);
 
     perfT += dt; if (perfT > 2) { perfT = 0;
       if (ema > 24 && pr > 0.6) { pr = Math.max(0.6, pr - 0.1); resize(); } else if (ema < 14 && pr < maxPr) { pr = Math.min(pr + 0.1, maxPr); resize(); } }
     renderer.render(scene, camera);
     hudT += dt; if (hudT > 0.15) { hudT = 0; const s = tiles.stats();
-      hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\ntiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms} · calls ${renderer.info.render.calls}`; }
+      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · ${z.visible} visibles · ${z.pending} en red${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
+      hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\n${world} · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k`;
+      if (ts) attrib.textContent = ts.copyright ? 'Datos: ' + ts.copyright : ''; }
   }
   requestAnimationFrame(frame);
   window.RW = { RS, scene, camera, renderer, tiles, collision };

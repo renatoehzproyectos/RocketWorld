@@ -16,10 +16,47 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
 .btn{position:absolute;pointer-events:auto;border:2px solid #fff6;background:#0008;color:#fff;border-radius:50%;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none}
 #joy{position:absolute;left:24px;bottom:24px;width:140px;height:140px;border-radius:50%;border:2px solid #fff5;background:#0005;pointer-events:auto}
 #knob{position:absolute;left:45px;top:45px;width:50px;height:50px;border-radius:50%;background:#fffa}
+
+#gear{position:fixed;right:12px;top:10px;z-index:6;width:42px;height:42px;border-radius:50%;border:2px solid #fff6;background:#0008;color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;touch-action:manipulation}
+#settings{display:none;position:fixed;z-index:7;right:10px;top:58px;width:min(360px,calc(100vw - 20px));max-height:calc(100% - 70px);overflow:auto;touch-action:pan-y;background:#101722f2;border:1px solid #fff3;border-radius:12px;padding:14px;font:13px/1.4 system-ui,sans-serif;box-sizing:border-box}
+#settings h2{margin:0 0 10px;font-size:15px;letter-spacing:.08em}
+#settings label{display:block;margin:10px 0 3px;color:#aab;font-size:12px}
+#settings input[type=text],#settings input[type=number],#settings select{width:100%;box-sizing:border-box;background:#0b1018;color:#fff;border:1px solid #fff3;border-radius:8px;padding:9px;font-size:14px}
+#settings input[type=range]{width:100%}
+#settings .row{display:flex;gap:8px}#settings .row>div{flex:1}
+#settings button{margin-top:12px;padding:10px 14px;border-radius:8px;border:0;font-weight:700;font-size:14px}
+#sApply{background:#ff6a1a;color:#fff}#sClose,#sClear{background:#2a3444;color:#fff;margin-left:6px}
+#sStatus{margin-top:10px;font-size:12px;min-height:16px;white-space:pre-wrap}
+#settings small{color:#889;display:block;margin-top:8px}
+#attrib{position:fixed;right:8px;bottom:6px;font:10px/1.3 system-ui;color:#fff;opacity:.85;text-shadow:0 1px 2px #000;max-width:55vw;text-align:right;pointer-events:none}
 </style></head><body>
 <canvas id="c"></canvas>
 <div id="loading"><h1>ROCKETWORLD</h1><div id="status">Cargando…</div></div>
 <div id="hud"></div>
+<button id="gear" aria-label="Ajustes">⚙</button>
+<div id="attrib"></div>
+<div id="settings">
+  <h2>AJUSTES · MUNDO 3D</h2>
+  <label>Fuente del mundo</label>
+  <select id="sProvider">
+    <option value="google">Google Photorealistic 3D Tiles (API key de Google Maps)</option>
+    <option value="ion-google">Cesium ion · Google Photorealistic (asset 2275207)</option>
+    <option value="ion-osm">Cesium ion · OSM Buildings (asset 96188)</option>
+    <option value="ion-custom">Cesium ion · asset personalizado</option>
+  </select>
+  <label>API key / token</label>
+  <input type="text" id="sKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pega aquí tu API key o token">
+  <div id="sAssetRow" style="display:none"><label>ID del asset de Cesium ion</label><input type="text" id="sAsset" inputmode="numeric" placeholder="p. ej. 2275207"></div>
+  <label>Ubicación de inicio</label>
+  <select id="sPreset"></select>
+  <div class="row"><div><label>Latitud</label><input type="number" id="sLat" step="any"></div><div><label>Longitud</label><input type="number" id="sLon" step="any"></div></div>
+  <label>Detalle máx. (error de pantalla): <span id="sSseVal"></span> <span style="color:#889">· menos = más nítido</span></label>
+  <input type="range" id="sSse" min="6" max="48" step="2">
+  <label><input type="checkbox" id="sFollow"> Seguir el terreno (experimental)</label>
+  <div><button id="sApply">Aplicar</button><button id="sClear">Borrar clave</button><button id="sClose">Cerrar</button></div>
+  <div id="sStatus"></div>
+  <small>Sin clave se usa la ciudad procedural. La clave se guarda solo en este dispositivo y solo se envía a Google/Cesium. Restríngela por dominio en su consola. Google: activa «Map Tiles API».</small>
+</div>
 <div id="help">WASD conducir · Espacio salto · Shift boost · Ctrl/X derrape · Q/E air-roll · C cámara · R reiniciar</div>
 <div id="mobile">
   <div id="joy"><div id="knob"></div></div>
@@ -31,5 +68,6 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
 <script type="module" src="src/main.js"></script>
 </body></html>
