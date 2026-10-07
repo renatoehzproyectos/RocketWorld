@@ -9,21 +9,15 @@ Sin build ni Node: archivos estáticos + ES modules.
 WASD/flechas conducir · Espacio salto (doble = flip) · Shift boost infinito · Ctrl/X derrape ·
 Q/E air-roll · C cámara chase/aérea · R reiniciar. En móvil: joystick + botones.
 
-## Arquitectura
-- `dist/` — RocketSim WASM + adaptador (del baseline probado, sin cambios).
-- `src/coords.js` — conversión RS→three (X, Z→Y, -Y→Z; 1 uu = 1/50 m).
-- `src/main.js` — arranque en orden probado, loop fijo a 120 Hz con interpolación.
-- `src/world.js` — ciudad procedural: chunks con InstancedMesh, culling manual por frustum y LOD por distancia.
-- `src/collision.js` — colisión de edificios separada del mesh visual (AABB + spatial hash).
+## Arquitectura (v0.2)
+- `dist/` — RocketSim WASM + adaptador (baseline probado). La arena de fútbol ya no se renderiza.
+- `src/main.js` — loop 120 Hz + **origen flotante**: el coche se devuelve al centro de la arena al pasar de 2600 uu y el origen del mundo (double) absorbe el desplazamiento → mundo infinito.
+- `src/tiles.js` — TileManager propio: streaming por anillos, LOD por distancia, presupuesto de tiles/frame, descarga con histéresis. Instancias en **pools** (4 draw calls para toda la ciudad).
+- `src/procgen.js` — proveedor de tiles determinista (contrato `genTile(i,j) → {houses, palms}`; sustituible por un cargador 3D Tiles real).
+- `src/terrain.js` — suelo/calles/costa/mar en shader por posición de mundo, cielo y cordillera lejana.
+- `src/collision.js` — colisión por tile (solo LOD0), separada del visual.
 - `src/camera.js`, `src/input.js`, `src/vehicle.js`.
 
-## Estado frente a los chunks del MASTER
-01 bootstrap ✅ · 03 vehículo ✅ · 04/05 RocketSim ✅ (baseline) · 08 controles ✅ · 09 colisión ✅ (JS) ·
-10 manzana ✅ · 12 LOD/culling ✅ · 14 vegetación ✅ · 15 cámara ✅ · 18 móvil ✅ (básico) · 19 profiling ✅ (HUD + resolución dinámica)
-Pendientes: 02 Cesium, 06/07 physics worker, 11/13 tiles y streaming reales, 16 pulido, 17 compresión, 20 release.
-
-## Limitaciones conocidas
-- El WASM solo expone la arena de fútbol de RocketSim (no acepta mallas propias). El área jugable
-  es ese rectángulo (~164×205 m, techo ~41 m) con paredes invisibles; fuera se ve el paisaje lejano.
-- Los edificios se resuelven en JS vía `setCarState` (empujan y rebotan); los techos se pueden pisar.
-- El render no se pudo probar en un navegador dentro del sandbox; la física y la colisión sí se probaron headless.
+## Limitaciones
+- El techo de RocketSim (~41 m) sigue activo: está dentro del WASM. Quitarlo requiere recompilar RocketSim sin arena.
+- No es Cesium/3D Tiles real todavía: es un runtime propio con la misma filosofía; falta el cargador de tileset.json.
