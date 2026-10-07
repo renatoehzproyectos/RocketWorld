@@ -22,10 +22,21 @@ export class Tileset3D {
     let url;
     if (cfg.provider === 'google') { this.key = cfg.key; url = 'https://tile.googleapis.com/v1/3dtiles/root.json'; }
     else {
-      const id = cfg.provider === 'ion-osm' ? 96188 : cfg.provider === 'ion-google' ? 2275207 : cfg.asset;
-      const r = await fetch(`https://api.cesium.com/v1/assets/${id}/endpoint?access_token=${encodeURIComponent(cfg.key)}`);
-      if (!r.ok) throw new Error(`Cesium ion respondió HTTP ${r.status}: revisa el token y que el asset ${id} esté en tu cuenta`);
-      const ep = await r.json(); this.token = ep.accessToken; url = ep.url;
+      const tok = String(cfg.key || '').replace(/^\s*bearer\s+/i, '').replace(/["'\s]/g, '');
+      const id = cfg.provider === 'ion-osm' ? 96188 : cfg.provider === 'ion-google' ? 2275207 : parseInt(String(cfg.asset).replace(/\D/g, ''), 10);
+      if (!Number.isFinite(id)) throw new Error('ID de asset de Cesium ion no válido (solo números)');
+      if (/^AIza/.test(tok)) throw new Error('Esa clave es de Google (empieza por AIza). Elige «Google Photorealistic 3D Tiles» o pega un token de Cesium ion (empieza por eyJ)');
+      const r = await fetch(`https://api.cesium.com/v1/assets/${id}/endpoint`, { headers: { Authorization: 'Bearer ' + tok } });
+      if (!r.ok) {
+        let m = ''; try { const j = await r.json(); m = j.message || j.code || ''; } catch (_) {}
+        throw new Error(`Cesium ion HTTP ${r.status}${m ? ' — ' + m : ''} (asset ${id}). Comprueba: token completo de ion con permiso assets:read, y que el asset esté añadido a «My Assets» de tu cuenta`);
+      }
+      const ep = await r.json();
+      if (ep.externalType || ep.options?.url) {                       // p. ej. Google Photorealistic servido vía ion: viene la URL y la key de Google
+        url = ep.options.url; if (ep.options.key) this.key = ep.options.key;
+        if (/tile\.googleapis\.com/.test(url) === false && ep.accessToken) this.token = ep.accessToken;
+      } else { this.token = ep.accessToken; url = ep.url; }
+      if (!url) throw new Error('Cesium ion no devolvió URL del tileset (tipo de asset no soportado: ' + (ep.type || '?') + ')');
     }
     const json = await this.fetchJSON(url);
     if (!json.root) throw new Error('tileset.json sin "root"');
