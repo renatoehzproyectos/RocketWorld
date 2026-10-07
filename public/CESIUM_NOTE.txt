@@ -1,1 +1,0 @@
-Cesium assets live under /tmp/rocketworld/public/cesium (23MB) — run from /tmp for full Cesium
