@@ -20,7 +20,7 @@ const isJson = u => /\.json(\?|$)/i.test(u || '');
 export class Tileset3D {
   constructor(scene, camera, o = {}) {
     Object.assign(this, { scene, camera, maxSSE: o.sse ?? 16, maxTiles: o.maxTiles ?? 300, maxReq: o.maxReq ?? 6, maxBytes: o.maxBytes ?? 500e6, lowMem: !!o.lowMem });
-    this.bytes = 0; this.evicted = 0; this.maxTex = Math.min(o.maxTex ?? 120, 96); this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE;   // maxTex: tope duro, nunca llegar a 100 texturas
+    this.bytes = 0; this.evicted = 0; this.maxTex = o.maxTex ?? 120; this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE;
     this.root = new THREE.Group(); scene.add(this.root);
     this.anchor = { lat: 0, lon: 0, h: 0 }; this.P0 = new V3(); this.M = new THREE.Matrix4(); this._T = new THREE.Matrix4();
     this.frame = 0; this.loaded = new Set(); this.queue = []; this.active = 0; this.sel = []; this.rootTile = null;
@@ -138,21 +138,13 @@ export class Tileset3D {
     if (t.external && t.state !== 2) { this.request(t, dist, f, true); return; }
     const thr = this.sseCur * (1 + dist / 400);                // tolerancia creciente con la distancia: cerca nítido, lejos simple
     const refine = !content || (kids.length > 0 && t.ge * this.k / dist > thr);
-    if (!refine || !kids.length) {
-      if (content && t.state !== 2 && kids.length) { this.request(t, dist, f, true); for (const k of kids) this.fallback(k, f, 0); return; }   // padre aún sin cargar: mientras llega, muestra los hijos ya cargados (sin huecos al bajar detalle)
-      if (content) this.select(t, dist, f); return;
-    }
+    if (!refine || !kids.length) { if (content) this.select(t, dist, f); return; }
     if (t.refine === 'ADD') { if (content) this.select(t, dist, f); for (const k of kids) this.visit(k, f); return; }
     if (content && t.state === 2) {
       let ok = true; for (const k of kids) if (!this.ready(k, 0)) { ok = false; this.prefetch(k, f, 0); }
       if (!ok) { this.select(t, dist, f); return; }
     } else if (content) this.request(t, dist, f, true);
     for (const k of kids) this.visit(k, f);
-  }
-  fallback(k, f, d) {
-    if (d > 6 || !this.inView(k)) return;
-    if (k.uri && !k.external && k.state === 2) { k.selFrame = f; this.sel.push(k); return; }
-    for (const c of k.children) this.fallback(c, f, d + 1);
   }
   select(t, dist, f) { if (t.state === 2) { t.selFrame = f; this.sel.push(t); } else this.request(t, dist, f, true); }
   ready(k, d) {
@@ -181,9 +173,9 @@ export class Tileset3D {
       const t = q[i];
       if (t.state !== 0) { q.splice(i, 1); t.queued = false; continue; }
       if (!t.external) {
-        const lim = t.needed ? this.maxTex : this.maxTex * 0.85;   // la precarga no usa el último 15 %
-        let room = true; while (this.texCount + this.active >= lim) if (!this.evictOne(f)) { room = false; break; }   // lleno: libera tiles ocultos antiguos en vez de congelarse
-        if (!room) { i++; continue; }
+        const used = this.texCount + this.active;
+        if (used >= this.maxTex) { if (!t.needed || !this.evictOne(f)) { i++; continue; } }   // lleno: solo lo necesario, expulsando algo antiguo
+        else if (!t.needed && used >= this.maxTex * 0.85) { i++; continue; }                    // la precarga no usa el último 15 %
       }
       q.splice(i, 1); t.queued = false; this.load(t);
     }
@@ -232,7 +224,6 @@ export class Tileset3D {
     }
     if (this.disposed) { this.freeHolder(holder, t.meshes); return; }
     t.holder = holder; this.root.add(holder); t.state = 2; t.loadedFrame = this.frame; this.bytes += t.bytes; this.texCount += t.tex; this.loaded.add(t); this.place(t);
-    while (this.texCount >= 100 && this.evictOne(this.frame)) {}   // si aun así se acerca a 100, libera lo oculto más antiguo
   }
   // ---------- caché ----------
   freeHolder(h, meshes) { h.parent && h.parent.remove(h); (meshes || []).forEach(m => { m.geometry.dispose(); m.material.map && m.material.map.dispose(); m.material.dispose(); }); }

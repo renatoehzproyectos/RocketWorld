@@ -70,13 +70,7 @@ async function boot() {
   if (ui.get().key) applySettings(ui.get());
 
   let acc = 0, last = performance.now(), hudT = 0, perfT = 0, ema = 16, clock = 0;
-  const hud = $('hud'), stable = {};
-  const stableCount = (name, value) => {
-    const prev = stable[name];
-    if (prev === undefined) return stable[name] = value;
-    const step = Math.max(1, Math.ceil(Math.abs(value - prev) * 0.12));
-    return stable[name] = prev + Math.max(-step, Math.min(step, value - prev));
-  };
+  const hud = $('hud');
   let boots = 1, ctxLost = false;
   try { boots = (+sessionStorage.getItem('rw.boots') || 0) + 1; sessionStorage.setItem('rw.boots', boots); } catch (_) {}
   renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); ctxLost = true; });
@@ -130,7 +124,7 @@ async function boot() {
     if (ts) {
       groundT += dt;
       ts.setOY(oy);
-      if ((follow || !ts.hasGround) && groundT > 0.25 && (oy === 0 || !ts.hasGround)) {   // la 1.ª alineación se hace siempre (aunque oy ≠ 0); luego solo si «seguir terreno» y en suelo
+      if ((follow || !ts.hasGround) && groundT > 0.25 && oy === 0) {      // la 1.ª alineación se hace siempre; luego solo si «seguir terreno»
         groundT = 0; const g = ts.sampleGround(carPos.x, carPos.z);
         if (g !== null) { vTarget = ts.vOff - g; ts.lastG = g; if (!ts.hasGround || Math.abs(vTarget - ts.vOff) > 4) { ts.hasGround = true; ts.setVOff(vTarget); } }   // saltos grandes: corrección inmediata (nunca quedarse bajo tierra)
       }
@@ -143,10 +137,10 @@ async function boot() {
       if (ema > 24 && pr > 0.6) { pr = Math.max(0.6, pr - 0.1); resize(); } else if (ema < 14 && pr < maxPr) { pr = Math.min(pr + 0.1, maxPr); resize(); } }
     renderer.render(scene, camera);
     hudT += dt; if (hudT > 0.15) { hudT = 0; const s = tiles.stats();
-      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · tex ${stableCount('tileTex', z.tex)}/${z.maxTex} · detalle ${z.sse}px (${z.mb} MB, -${z.evicted}) · ${stableCount('visible', z.visible)} vis · ${stableCount('network', z.pending)} red · fallos ${z.failed} · vOff ${ts.vOff.toFixed(0)}m g ${ts.lastG === undefined ? '–' : ts.lastG.toFixed(0)}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
+      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · tex ${z.tex}/${z.maxTex} · detalle ${z.sse}px (${z.mb} MB, -${z.evicted}) · ${z.visible} vis · ${z.pending} red · fallos ${z.failed} · vOff ${ts.vOff.toFixed(0)}m g ${ts.lastG === undefined ? '–' : ts.lastG.toFixed(0)}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
       hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen · alt ${Math.round(carPos.y + oy)} m\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\n${world} · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k`;
       const heap = performance.memory ? ` · heap ${Math.round(performance.memory.usedJSHeapSize / 1e6)} MB` : '';
-      hud.textContent += `\narranques ${boots}${ctxLost ? ' · ¡CONTEXTO WEBGL PERDIDO!' : ''}${heap} · tex ${stableCount('renderTex', renderer.info.memory.textures)} geo ${stableCount('renderGeo', renderer.info.memory.geometries)}`;
+      hud.textContent += `\narranques ${boots}${ctxLost ? ' · ¡CONTEXTO WEBGL PERDIDO!' : ''}${heap} · tex ${renderer.info.memory.textures} geo ${renderer.info.memory.geometries}`;
       if (ts) attrib.textContent = ts.copyright ? 'Datos: ' + ts.copyright : ''; }
   }
   requestAnimationFrame(frame);
