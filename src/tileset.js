@@ -21,7 +21,7 @@ export class Tileset3D {
   constructor(scene, camera, o = {}) {
     Object.assign(this, { scene, camera, maxSSE: o.sse ?? 16, maxTiles: o.maxTiles ?? 300, maxReq: o.maxReq ?? 6, maxBytes: o.maxBytes ?? 500e6, lowMem: !!o.lowMem });
     this.onEvent = o.onEvent || (() => {}); this.errSeen = {};
-    this.bytes = 0; this.evicted = 0; this.maxTex = o.maxTex ?? 120; this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE;
+    this.bytes = 0; this.evicted = 0; this.maxTex = o.maxTex ?? 120; this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE; this.sseDyn = o.sseDyn ?? 48;
     this.root = new THREE.Group(); scene.add(this.root);
     this.anchor = { lat: 0, lon: 0, h: 0 }; this.P0 = new V3(); this.M = new THREE.Matrix4(); this._T = new THREE.Matrix4();
     this.frame = 0; this.loaded = new Set(); this.queue = []; this.active = 0; this.sel = []; this.rootTile = null;
@@ -124,7 +124,7 @@ export class Tileset3D {
     for (const t of this.loaded) t.holder.visible = t.selFrame === f;
     if (f % 10 === 0) {                      // si lo visible ya llena el tope de texturas, baja el detalle; con holgura, lo recupera
       const p = this.sel.length / this.maxTex;
-      if (p > 0.85) this.sseCur = Math.min(this.sseCur * 1.05, Math.max(this.sseBase, 48)); else if (p < 0.6 && this.sseCur > this.sseBase) this.sseCur = Math.max(this.sseBase, this.sseCur * 0.97);
+      if (p > 0.85) this.sseCur = Math.min(this.sseCur * 1.05, Math.max(this.sseBase, this.sseDyn)); else if (p < 0.6 && this.sseCur > this.sseBase) this.sseCur = Math.max(this.sseBase, this.sseCur * 0.97);
     }
     this.pump(f);
     if (f % 15 === 0) this.evict(f);

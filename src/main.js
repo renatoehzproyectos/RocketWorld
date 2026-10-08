@@ -55,7 +55,7 @@ async function boot() {
     tiles.setEnabled(false); terrain.setGroundVisible(false);
     camera.near = 0.5; camera.far = coarse ? 6000 : 15000; camera.updateProjectionMatrix(); scene.fog.near = coarse ? 1200 : 2500; scene.fog.far = coarse ? 5500 : 12000;
     follow = s.follow; vTarget = 0;
-    const t = new Tileset3D(scene, camera, { onEvent: (t, m) => log.ev(t, m), sse: s.sse, maxTiles: Math.round(s.maxTex * 1.15) + 20, maxReq: coarse ? 4 : 8, maxBytes: coarse ? 240e6 : 700e6, lowMem: coarse, maxTex: s.maxTex });
+    const t = new Tileset3D(scene, camera, { onEvent: (t, m) => log.ev(t, m), sse: s.sse, maxTiles: Math.round(s.maxTex * 1.15) + 20, maxReq: coarse ? 4 : 8, maxBytes: coarse ? 240e6 : 700e6, lowMem: coarse, maxTex: s.maxTex, sseDyn: s.sseDyn });
     try { await t.init(s); ts = t; log.ev('3dtiles', 'tileset raíz cargado OK'); ui.status('Conectado. Cargando tiles…'); }
     catch (e) { console.error(e); log.ev('3dtiles-init-ERROR', e.message); t.dispose(); setProc(); ui.status('Error: ' + e.message + '\nMostrando ciudad procedural.', true); }
   };

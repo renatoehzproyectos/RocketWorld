@@ -60,8 +60,10 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
   <div class="row"><div><label>Latitud</label><input type="number" id="sLat" step="any"></div><div><label>Longitud</label><input type="number" id="sLon" step="any"></div></div>
   <label>Detalle máx. (error de pantalla): <span id="sSseVal"></span> <span style="color:#889">· menos = más nítido</span></label>
   <input type="range" id="sSse" min="6" max="48" step="2">
+  <label>Tope del SSE dinámico: <span id="sSseDynVal"></span> <span style="color:#889">· cuánto puede bajar el detalle automáticamente al llenarse las texturas</span></label>
+  <input type="range" id="sSseDyn" min="6" max="128" step="2">
   <label>Tope de texturas en memoria: <span id="sTexVal"></span> <span style="color:#889">· más = más detalle, más memoria</span></label>
-  <input type="range" id="sTex" min="40" max="400" step="10">
+  <input type="range" id="sTex" min="40" max="1000" step="10">
   <label><input type="checkbox" id="sFollow"> Seguir el terreno (experimental)</label>
   <label>Depuración</label>
   <select id="sLogWin"><option value="3">Copiar últimos 3 s</option><option value="10" selected>Copiar últimos 10 s</option><option value="30">Copiar últimos 30 s</option></select>
