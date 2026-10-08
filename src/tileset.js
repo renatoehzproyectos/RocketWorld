@@ -48,11 +48,12 @@ export class Tileset3D {
     if (!json.root) throw new Error('tileset.json sin "root"');
     this.rootTile = this.makeTile(json.root, null, url);
   }
-  auth(u) {
-    const x = new URL(u, location.href);
-    if (x.hostname === 'tile.googleapis.com' && this.key && !x.searchParams.has('key')) x.searchParams.set('key', this.key);
-    if (this.token && x.hostname.endsWith('cesium.com') && !x.searchParams.has('access_token')) x.searchParams.set('access_token', this.token);
-    return x.href;
+  auth(u) {                                   // añade key/token SIN reescribir la query (URLSearchParams recodifica el token `session` de Google → 400)
+    const x = new URL(u, location.href); let h = x.href;
+    const add = (n, v) => { h += (h.includes('?') ? '&' : '?') + n + '=' + encodeURIComponent(v); };
+    if (x.hostname === 'tile.googleapis.com' && this.key && !x.searchParams.has('key')) add('key', this.key);
+    if (this.token && x.hostname.endsWith('cesium.com') && !x.searchParams.has('access_token')) add('access_token', this.token);
+    return h;
   }
   async fetchJSON(url) {
     const r = await fetch(this.auth(url));
@@ -128,8 +129,8 @@ export class Tileset3D {
   select(t, dist, f) { if (t.state === 2) { t.selFrame = f; this.sel.push(t); } else this.request(t, dist, f); }
   ready(k, d) {
     if (d > 6 || !this.inView(k)) return true;
-    if (k.external) return k.state === 3 || (k.state === 2 && k.children.every(c => this.ready(c, d + 1)));   // un externo fallido no bloquea al padre
-    if (k.uri) return k.state === 2 || k.state === 3;
+    if (k.external) return k.state === 2 && k.children.every(c => this.ready(c, d + 1));
+    if (k.uri) return k.state === 2;                 // fallido/pendiente → el padre sigue visible (sin huecos)
     return k.children.every(c => this.ready(c, d + 1));
   }
   prefetch(k, f, d) {
@@ -151,9 +152,9 @@ export class Tileset3D {
   }
   load(t) {
     t.state = 1; this.active++;
-    fetch(this.auth(t.uri)).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status + ' en ' + new URL(t.uri).hostname); return r.arrayBuffer(); })
+    fetch(this.auth(t.uri)).then(async r => { if (!r.ok) { let b = ''; try { b = (await r.text()).replace(/\s+/g, ' ').slice(0, 110); } catch (_) {} throw new Error('HTTP ' + r.status + (b ? ' ' + b : '')); } return r.arrayBuffer(); })
       .then(buf => this.parse(t, buf))
-      .catch(e => { t.state = 3; t.retryAt = performance.now() + 8000; this.lastError = e.message; console.warn('3D Tiles:', e); })
+      .catch(e => { t.state = 3; t.retryAt = performance.now() + 8000; this.lastError = e.message; this.failed = (this.failed || 0) + 1; console.warn('3D Tiles:', e); })
       .finally(() => { this.active--; });
   }
   extract(buf, out = []) {
@@ -209,6 +210,6 @@ export class Tileset3D {
     }
     return best;
   }
-  stats() { return { loaded: this.loaded.size, pending: this.queue.length + this.active, visible: this.sel.length }; }
+  stats() { return { loaded: this.loaded.size, pending: this.queue.length + this.active, visible: this.sel.length, failed: this.failed || 0 }; }
   dispose() { this.disposed = true; for (const t of [...this.loaded]) this.free(t); this.scene.remove(this.root); this.draco && this.draco.dispose(); }
 }

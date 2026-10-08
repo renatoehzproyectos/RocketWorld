@@ -129,7 +129,7 @@ async function boot() {
       if (ema > 24 && pr > 0.6) { pr = Math.max(0.6, pr - 0.1); resize(); } else if (ema < 14 && pr < maxPr) { pr = Math.min(pr + 0.1, maxPr); resize(); } }
     renderer.render(scene, camera);
     hudT += dt; if (hudT > 0.15) { hudT = 0; const s = tiles.stats();
-      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · ${z.visible} visibles · ${z.pending} en red${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
+      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · ${z.visible} visibles · ${z.pending} en red · fallos ${z.failed}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
       hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\n${world} · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k`;
       if (ts) attrib.textContent = ts.copyright ? 'Datos: ' + ts.copyright : ''; }
   }
