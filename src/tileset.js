@@ -20,7 +20,9 @@ export class Tileset3D {
   async init(cfg) {
     this.setAnchor(cfg.lat * rad, cfg.lon * rad, 0);
     let url;
-    if (cfg.provider === 'google') { this.key = cfg.key; url = 'https://tile.googleapis.com/v1/3dtiles/root.json'; }
+    if (cfg.provider === 'google') {
+      this.key = String(cfg.key || '').replace(/["'\s]/g, '');
+      if (/^eyJ/.test(this.key)) throw new Error('Ese es un token de Cesium ion (empieza por eyJ), no una key de Google. Cambia «Fuente del mundo» a una opción de Cesium ion'); url = 'https://tile.googleapis.com/v1/3dtiles/root.json'; }
     else {
       const tok = String(cfg.key || '').replace(/^\s*bearer\s+/i, '').replace(/["'\s]/g, '');
       const id = cfg.provider === 'ion-osm' ? 96188 : cfg.provider === 'ion-google' ? 2275207 : parseInt(String(cfg.asset).replace(/\D/g, ''), 10);
@@ -50,7 +52,7 @@ export class Tileset3D {
   }
   async fetchJSON(url) {
     const r = await fetch(this.auth(url));
-    if (!r.ok) throw new Error(r.status === 403 || r.status === 401 ? `HTTP ${r.status}: clave/token inválido o API no habilitada (Google: "Map Tiles API")` : `HTTP ${r.status}`);
+    if (!r.ok) throw new Error(r.status === 403 || r.status === 401 ? `HTTP ${r.status}: clave/token inválido, sin permiso o API no habilitada (Google: «Map Tiles API» + facturación activa; ion: token con assets:read y asset en My Assets)` : `HTTP ${r.status}`);
     return r.json();
   }
   // ---------- árbol ----------
@@ -145,7 +147,7 @@ export class Tileset3D {
   }
   load(t) {
     t.state = 1; this.active++;
-    fetch(this.auth(t.uri)).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+    fetch(this.auth(t.uri)).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status + ' en ' + new URL(t.uri).hostname); return r.arrayBuffer(); })
       .then(buf => this.parse(t, buf))
       .catch(e => { t.state = 3; t.retryAt = performance.now() + 8000; this.lastError = e.message; console.warn('3D Tiles:', e); })
       .finally(() => { this.active--; });
