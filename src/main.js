@@ -51,7 +51,7 @@ async function boot() {
     tiles.setEnabled(false); terrain.setGroundVisible(false);
     camera.near = 0.5; camera.far = coarse ? 6000 : 15000; camera.updateProjectionMatrix(); scene.fog.near = coarse ? 1200 : 2500; scene.fog.far = coarse ? 5500 : 12000;
     follow = s.follow; vTarget = 0;
-    const t = new Tileset3D(scene, camera, { sse: s.sse, maxTiles: coarse ? 160 : 380, maxReq: coarse ? 4 : 8, maxBytes: coarse ? 240e6 : 700e6, lowMem: coarse });
+    const t = new Tileset3D(scene, camera, { sse: s.sse, maxTiles: coarse ? 160 : 380, maxReq: coarse ? 4 : 8, maxBytes: coarse ? 240e6 : 700e6, lowMem: coarse, maxTex: s.maxTex });
     try { await t.init(s); ts = t; ui.status('Conectado. Cargando tiles…'); }
     catch (e) { console.error(e); t.dispose(); setProc(); ui.status('Error: ' + e.message + '\nMostrando ciudad procedural.', true); }
   };
@@ -137,7 +137,7 @@ async function boot() {
       if (ema > 24 && pr > 0.6) { pr = Math.max(0.6, pr - 0.1); resize(); } else if (ema < 14 && pr < maxPr) { pr = Math.min(pr + 0.1, maxPr); resize(); } }
     renderer.render(scene, camera);
     hudT += dt; if (hudT > 0.15) { hudT = 0; const s = tiles.stats();
-      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados (${z.mb} MB, -${z.evicted}) · ${z.visible} vis · ${z.pending} red · fallos ${z.failed}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
+      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · tex ${z.tex}/${z.maxTex} · detalle ${z.sse}px (${z.mb} MB, -${z.evicted}) · ${z.visible} vis · ${z.pending} red · fallos ${z.failed}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
       hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen · alt ${Math.round(carPos.y + oy)} m\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\n${world} · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k`;
       const heap = performance.memory ? ` · heap ${Math.round(performance.memory.usedJSHeapSize / 1e6)} MB` : '';
       hud.textContent += `\narranques ${boots}${ctxLost ? ' · ¡CONTEXTO WEBGL PERDIDO!' : ''}${heap} · tex ${renderer.info.memory.textures} geo ${renderer.info.memory.geometries}`;
