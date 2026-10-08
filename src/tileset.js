@@ -35,11 +35,15 @@ export class Tileset3D {
       }
       const ep = await r.json();
       if (ep.externalType || ep.options?.url) {                       // p. ej. Google Photorealistic servido vía ion: viene la URL y la key de Google
-        url = ep.options.url; if (ep.options.key) this.key = ep.options.key;
+        url = ep.options.url; const ok = ep.options.key || ep.options.apiKey; if (ok) this.key = ok;
         if (/tile\.googleapis\.com/.test(url) === false && ep.accessToken) this.token = ep.accessToken;
       } else { this.token = ep.accessToken; url = ep.url; }
       if (!url) throw new Error('Cesium ion no devolvió URL del tileset (tipo de asset no soportado: ' + (ep.type || '?') + ')');
     }
+    try {                                   // la key/token puede venir embebida en la URL del root: hay que propagarla a las URLs hijas
+      const u = new URL(url, location.href), k = u.searchParams.get('key'), at = u.searchParams.get('access_token');
+      if (k && !this.key) this.key = k; if (at && !this.token) this.token = at;
+    } catch (_) {}
     const json = await this.fetchJSON(url);
     if (!json.root) throw new Error('tileset.json sin "root"');
     this.rootTile = this.makeTile(json.root, null, url);
