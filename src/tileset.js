@@ -3,6 +3,18 @@ import { geodeticToECEF, enuBasis, moveGeodetic, rad } from './geo.js';
 // tilesets externos, glb/b3dm/cmpt (+Draco), cola priorizada con concurrencia limitada, caché LRU y origen flotante ENU.
 const V3 = THREE.Vector3, Y2Z = new THREE.Matrix4().makeRotationX(Math.PI / 2), DOWN = new V3(0, -1, 0);
 const dirScale = (e, x, y, z, o) => o.set(e[0] * x + e[4] * y + e[8] * z, e[1] * x + e[5] * y + e[9] * z, e[2] * x + e[6] * y + e[10] * z);
+// Resuelve `uri` contra `base` heredando los parámetros de query de la base que la URI no trae (p. ej. `session` de Google),
+// igual que CesiumJS. Se copian en crudo para no recodificar el token.
+function inherit(uri, base) {
+  const b = new URL(base, location.href), u = new URL(uri, b); let h = u.href;
+  if (u.hostname !== b.hostname || !b.search) return h;
+  const have = new Set([...u.searchParams.keys()]);
+  for (const raw of b.search.slice(1).split('&')) {
+    let k; try { k = decodeURIComponent(raw.split('=')[0]); } catch (_) { continue; }
+    if (raw && !have.has(k)) { h += (h.includes('?') ? '&' : '?') + raw; have.add(k); }
+  }
+  return h;
+}
 const isJson = u => /\.json(\?|$)/i.test(u || '');
 
 export class Tileset3D {
@@ -63,7 +75,7 @@ export class Tileset3D {
   // ---------- árbol ----------
   makeTile(j, parent, baseUrl) {
     const local = j.transform ? new THREE.Matrix4().fromArray(j.transform) : new THREE.Matrix4();
-    const uri = j.content?.uri ?? j.content?.url, abs = uri ? new URL(uri, new URL(baseUrl, location.href)).href : null;
+    const uri = j.content?.uri ?? j.content?.url, abs = uri ? inherit(uri, baseUrl) : null;
     const t = { parent, children: [], uri: abs, external: !!abs && isJson(abs), state: 0, queued: false, ge: j.geometricError ?? 0, selFrame: -1,
       refine: (j.refine || parent?.refine || 'REPLACE').toUpperCase(), world: parent ? parent.world.clone().multiply(local) : local, center: new V3(), radius: 0,
       holder: null, meshes: null, bytes: 0, copyright: '', prio: 0, qf: 0, retryAt: 0 };
