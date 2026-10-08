@@ -156,7 +156,7 @@ export class Tileset3D {
   }
   prefetch(k, f, d) {
     if (d > 6 || !this.inView(k)) return;
-    if (k.uri && !(k.external && k.state === 2)) { if (k.state !== 2) this.request(k, this.dist(k), f); if (!k.external) return; }
+    if (k.uri && !(k.external && k.state === 2)) { if (k.state !== 2) this.request(k, this.dist(k), f, true); if (!k.external) return; }   // los hijos de un tile en refinamiento hacen falta: needed
     for (const c of k.children) this.prefetch(c, f, d + 1);
   }
   // ---------- red ----------
@@ -176,7 +176,6 @@ export class Tileset3D {
       if (!t.external) {
         const used = this.texCount + this.active;
         if (used >= this.maxTex) { if (!t.needed || !this.evictOne(f)) { i++; continue; } }   // lleno: solo lo necesario, expulsando algo antiguo
-        else if (!t.needed && used >= this.maxTex * 0.85) { i++; continue; }                    // la precarga no usa el último 15 %
       }
       q.splice(i, 1); t.queued = false; this.load(t);
     }

@@ -42,6 +42,7 @@ export function createLog() {
       if (best > 20) warn.push(`MAPA INVISIBLE ${best} frames seguidos (sel=0): mira vOff/g/cand/loaded en esas filas`);
       const t = mm('tex'), lo = mm('loaded'), v = col('vOff'), g = col('g');
       L.push(`tex ${t[0]}..${t[1]} · cargados ${lo[0]}..${lo[1]} · fallos acumulados Δ${col('fail').slice(-1)[0] - col('fail')[0]} · evictados Δ${col('evict').slice(-1)[0] - col('evict')[0]} · MB ${mm('MB')[0]}..${mm('MB')[1]} · sse ${mm('sse')[0]}..${mm('sse')[1]}`);
+      { let bl = 0, cur = 0; R.forEach(r => { if (r[C.pend] > 0 && r[C.act] === 0) { cur++; bl = Math.max(bl, cur); } else cur = 0; }); if (bl > 60) warn.push(`COLA DE TILES BLOQUEADA ${bl} frames seguidos (pend>0 y act=0): no se descargan tiles aunque hacen falta`); }
       let step = 0; for (let i = 1; i < v.length; i++) step = Math.max(step, Math.abs(v[i] - v[i - 1]));
       const vr = mm('vOff'); L.push(`vOff ${vr[0].toFixed(1)}..${vr[1].toFixed(1)} m (mayor salto/frame ${step.toFixed(1)} m) · g ${g.length ? Math.min(...g).toFixed(1) + '..' + Math.max(...g).toFixed(1) : 'sin medida'}`);
       if (step > 3) warn.push(`vOff da saltos de ${step.toFixed(1)} m: la alineación vertical oscila`);

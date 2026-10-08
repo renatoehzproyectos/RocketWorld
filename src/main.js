@@ -50,7 +50,7 @@ async function boot() {
   const applySettings = async s => {
     log.ev('ajustes', `proveedor=${s.provider} clave=${redact(s.key)} asset=${s.asset || '-'} lat=${s.lat} lon=${s.lon} sse=${s.sse} maxTex=${s.maxTex} seguir=${s.follow}`);
     if (ts) { ts.dispose(); ts = null; }
-    cfg = s; hStable = null; hs = [];
+    cfg = s; hStable = null; hs = []; hFine = false;
     if (!s.key || (s.provider === 'ion-custom' && !s.asset)) { setProc(); return; }
     tiles.setEnabled(false); terrain.setGroundVisible(false);
     camera.near = 0.5; camera.far = coarse ? 6000 : 15000; camera.updateProjectionMatrix(); scene.fog.near = coarse ? 1200 : 2500; scene.fog.far = coarse ? 5500 : 12000;
@@ -61,12 +61,17 @@ async function boot() {
   };
   // Filtro del suelo: mediana de las últimas 9 medidas de h (altura del suelo en el marco del tileset, independiente de vOff).
   // Robusta a atípicos de ±300–1000 m (tiles groseros, azoteas) y sin depender del primer dato.
-  let hStable = null, hs = [], hOut = 0;
-  const feedGround = h => {
-    ts.lastH = h; hs.push(h); if (hs.length > 9) hs.shift();
-    const srt = [...hs].sort((a, b) => a - b), med = srt[srt.length >> 1];
-    if (Math.abs(h - med) > 25 && (hOut++ % 6 === 0)) log.ev('g-atipico', `h=${h.toFixed(1)} vs mediana ${med.toFixed(1)} (n=${hs.length}, tile ge=${ts.lastTile})`);
-    if (hStable === null) { ts.hasGround = true; ts.setVOff(-med); log.ev('suelo-inicial', `h=${med.toFixed(1)} → vOff=${(-med).toFixed(1)} (tile ge=${ts.lastTile})`); }
+  let hStable = null, hs = [], hOut = 0, hFine = false, hSkip = 0;
+  const FINE_GE = 12;      // solo tiles con error geométrico ≤ 12 m miden el suelo; uno grosero puede estar 750 m más arriba/abajo
+  const feedGround = (h, ge) => {
+    ts.lastH = h;
+    const fine = ge <= FINE_GE;
+    if (!fine && hFine) { if (hSkip++ % 20 === 0) log.ev('g-descartado', `tile grosero (ge=${ge.toFixed(0)} m) h=${h.toFixed(1)}: ignorado, ya hay suelo fino (${hStable === null ? '-' : hStable.toFixed(1)})`); return; }
+    if (fine && !hFine) { hFine = true; hs = []; hStable = null; log.ev('suelo-fino', `primer tile fino (ge=${ge.toFixed(1)} m): se descarta la alineación grosera`); }
+    hs.push(h); if (hs.length > 9) hs.shift();
+    const srt = [...hs].sort((x, y) => x - y), med = srt[srt.length >> 1];
+    if (Math.abs(h - med) > 25 && (hOut++ % 6 === 0)) log.ev('g-atipico', `h=${h.toFixed(1)} vs mediana ${med.toFixed(1)} (n=${hs.length}, tile ge=${ge.toFixed(1)})`);
+    if (hStable === null) { ts.hasGround = true; ts.setVOff(-med); log.ev('suelo-inicial', `h=${med.toFixed(1)} → vOff=${(-med).toFixed(1)} (tile ge=${ge.toFixed(1)})`); }
     else if (Math.abs(med - hStable) > 30) { log.ev('suelo-cambio', `mediana ${hStable.toFixed(1)} → ${med.toFixed(1)} (salto grande: recolocación inmediata)`); ts.setVOff(-med); }
     hStable = med; vTarget = -med;
   };
@@ -91,7 +96,7 @@ async function boot() {
 
   let acc = 0, last = performance.now(), hudT = 0, perfT = 0, ema = 16, clock = 0;
   const hud = $('hud');
-  let boots = 1, ctxLost = false, selZero = false;
+  let boots = 1, ctxLost = false, selZero = false, blocked = 0;
   try { boots = (+sessionStorage.getItem('rw.boots') || 0) + 1; sessionStorage.setItem('rw.boots', boots); } catch (_) {}
   renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); ctxLost = true; log.ev('WEBGL', 'CONTEXTO PERDIDO'); });
   renderer.domElement.addEventListener('webglcontextrestored', () => { ctxLost = false; log.ev('WEBGL', 'contexto restaurado'); });
@@ -147,7 +152,7 @@ async function boot() {
       ts.setOY(oy);
       if ((follow || !ts.hasGround) && groundT > 0.25 && oy === 0) {      // la 1.ª alineación se hace siempre; luego solo si «seguir terreno»
         groundT = 0; const g = ts.sampleGround(carPos.x, carPos.z);
-        if (g !== null) { ts.lastG = g; feedGround(g - ts.vOff); if (ts.gNullLogged) ts.gNullLogged = false; }   // h = altura del suelo en el marco del tileset (no depende de vOff)
+        if (g !== null) { ts.lastG = g; feedGround(g - ts.vOff, ts.lastTile); if (ts.gNullLogged) ts.gNullLogged = false; }   // h = altura del suelo en el marco del tileset (no depende de vOff)
         else if (!ts.gNullLogged) { ts.gNullLogged = true; log.ev('suelo', `sin medida de suelo (candidatos=${ts.lastCand}, visibles=${ts.sel.length})`); }
       }
       if (ts.hasGround) ts.setVOff(ts.vOff + (vTarget - ts.vOff) * (1 - Math.exp(-dt / 0.35)));
@@ -160,6 +165,7 @@ async function boot() {
     renderer.render(scene, camera);
     {
       const zs = ts ? ts.stats() : null, heap = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : null, inf = renderer.info;
+      if (zs) { if (zs.pending > 0 && ts.active === 0) { if (++blocked === 90) log.ev('COLA-BLOQUEADA', `pend=${zs.pending} act=0 durante 90 frames · tex ${zs.tex}/${zs.maxTex} · cargados ${zs.loaded}`); } else blocked = 0; }
       if (zs) { if (zs.visible === 0 && !selZero) { selZero = true; log.ev('SIN-TILES', `0 visibles (cargados=${zs.loaded}, pend=${zs.pending}, vOff=${ts.vOff.toFixed(1)}, g=${ts.lastG === undefined ? '-' : ts.lastG.toFixed(1)}, cam.y=${camera.position.y.toFixed(1)})`); } else if (zs.visible > 0 && selZero) { selZero = false; log.ev('tiles-vuelven', `${zs.visible} visibles`); } }
       log.frame([now, dt * 1000, 1000 / ema, carPos.x, carPos.y, carPos.z, speedUU * 0.036, st.isOnGround ? 1 : 0, ox, oz, AO, camera.position.x, camera.position.y, camera.position.z,
         zs && zs.loaded, zs && zs.tex, zs && zs.visible, zs && zs.pending, ts && ts.active, zs && zs.failed, zs && zs.sse, ts && ts.vOff, ts && ts.lastG, ts && ts.lastCand, zs && zs.mb, zs && zs.evicted,
