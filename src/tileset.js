@@ -21,7 +21,7 @@ export class Tileset3D {
   constructor(scene, camera, o = {}) {
     Object.assign(this, { scene, camera, maxSSE: o.sse ?? 16, maxTiles: o.maxTiles ?? 300, maxReq: o.maxReq ?? 6, maxBytes: o.maxBytes ?? 500e6, lowMem: !!o.lowMem });
     this.onEvent = o.onEvent || (() => {}); this.errSeen = {};
-    this.bytes = 0; this.evicted = 0; this.maxTex = o.maxTex ?? 120; this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE; this.sseDyn = o.sseDyn ?? 48;
+    this.bytes = 0; this.evicted = 0; this.maxTex = o.maxTex ?? 120; this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE; this.sseDyn = o.sseDyn ?? 48; this.minTex = o.minTex ?? 500;
     this.root = new THREE.Group(); scene.add(this.root);
     this.anchor = { lat: 0, lon: 0, h: 0 }; this.P0 = new V3(); this.M = new THREE.Matrix4(); this._T = new THREE.Matrix4();
     this.frame = 0; this.loaded = new Set(); this.queue = []; this.active = 0; this.sel = []; this.rootTile = null;
@@ -236,8 +236,9 @@ export class Tileset3D {
   }
   evict(f) {
     if (this.loaded.size <= this.maxTiles && this.bytes <= this.maxBytes) return;
+    if (this.texCount <= this.minTex) return;                 // mínimo de texturas: por debajo no se limpia nada
     const use = t => Math.max(t.selFrame, t.loadedFrame || 0), c = [...this.loaded].filter(t => use(t) < f - 90).sort((a, b) => use(a) - use(b));
-    for (const t of c) { if (this.loaded.size <= this.maxTiles * .85 && this.bytes <= this.maxBytes * .85) break; this.free(t); this.evicted++; }
+    for (const t of c) { if (this.texCount - (t.tex || 0) < this.minTex) break; if (this.loaded.size <= this.maxTiles * .85 && this.bytes <= this.maxBytes * .85) break; this.free(t); this.evicted++; }
   }
   // ---------- terreno ----------
   // Altura (y mundo) del suelo bajo (x,z). Solo cuenta el tile MÁS FINO que recibe el rayo: un tile grosero (cuya esfera también
