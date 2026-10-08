@@ -19,7 +19,8 @@ const isJson = u => /\.json(\?|$)/i.test(u || '');
 
 export class Tileset3D {
   constructor(scene, camera, o = {}) {
-    Object.assign(this, { scene, camera, maxSSE: o.sse ?? 16, maxTiles: o.maxTiles ?? 300, maxReq: o.maxReq ?? 6 });
+    Object.assign(this, { scene, camera, maxSSE: o.sse ?? 16, maxTiles: o.maxTiles ?? 300, maxReq: o.maxReq ?? 6, maxBytes: o.maxBytes ?? 500e6, lowMem: !!o.lowMem });
+    this.bytes = 0; this.evicted = 0;
     this.root = new THREE.Group(); scene.add(this.root);
     this.anchor = { lat: 0, lon: 0, h: 0 }; this.P0 = new V3(); this.M = new THREE.Matrix4(); this._T = new THREE.Matrix4();
     this.frame = 0; this.loaded = new Set(); this.queue = []; this.active = 0; this.sel = []; this.rootTile = null;
@@ -121,7 +122,8 @@ export class Tileset3D {
     this.sel.length = 0; this.visit(this.rootTile, f);
     for (const t of this.loaded) t.holder.visible = t.selFrame === f;
     this.pump(f);
-    if (f % 30 === 0) { this.evict(f); const set = new Set(); this.sel.forEach(t => t.copyright && t.copyright.split(';').forEach(s => s.trim() && set.add(s.trim()))); this.copyright = [...set].join(' · '); }
+    if (f % 15 === 0) this.evict(f);
+    if (f % 30 === 0) { const set = new Set(); this.sel.forEach(t => t.copyright && t.copyright.split(';').forEach(s => s.trim() && set.add(s.trim()))); this.copyright = [...set].join(' · '); }
   }
   inView(t) { const c = this.local(t, this._c2); this._s.center.copy(c); this._s.radius = t.radius; return this.frustum.intersectsSphere(this._s); }
   dist(t) { return Math.max(this.local(t, this._c2).distanceTo(this.camera.position) - t.radius, 0.01); }
@@ -194,22 +196,26 @@ export class Tileset3D {
       gltf.scene.traverse(o => {                                        // iluminación horneada: MeshBasicMaterial (mucho más barato)
         if (!o.isMesh) return; const old = o.material, map = old.map || null;
         o.material = new THREE.MeshBasicMaterial({ map, color: map ? 0xffffff : (old.color || 0xffffff), vertexColors: !!o.geometry.attributes.color, side: old.side });
+        if (map) {
+          if (this.lowMem) { map.generateMipmaps = false; map.minFilter = THREE.LinearFilter; }
+          map.onUpdate = () => { const im = map.image; if (im && im.close) im.close(); };   // libera la copia en RAM tras subir a la GPU
+        }
         old.dispose && old.dispose(); t.meshes.push(o);
         for (const a of Object.values(o.geometry.attributes)) t.bytes += a.array.byteLength;
-        if (map?.image?.width) t.bytes += map.image.width * map.image.height * 5.3;
+        if (map?.image?.width) t.bytes += map.image.width * map.image.height * (this.lowMem ? 4 : 5.3);
       });
       holder.add(gltf.scene);
     }
     if (this.disposed) { this.freeHolder(holder, t.meshes); return; }
-    t.holder = holder; this.root.add(holder); t.state = 2; this.loaded.add(t); this.place(t);
+    t.holder = holder; this.root.add(holder); t.state = 2; t.loadedFrame = this.frame; this.bytes += t.bytes; this.loaded.add(t); this.place(t);
   }
   // ---------- caché ----------
   freeHolder(h, meshes) { h.parent && h.parent.remove(h); (meshes || []).forEach(m => { m.geometry.dispose(); m.material.map && m.material.map.dispose(); m.material.dispose(); }); }
-  free(t) { this.freeHolder(t.holder, t.meshes); t.holder = null; t.meshes = null; t.state = 0; this.loaded.delete(t); }
+  free(t) { this.bytes -= t.bytes; this.freeHolder(t.holder, t.meshes); t.holder = null; t.meshes = null; t.state = 0; this.loaded.delete(t); }
   evict(f) {
-    if (this.loaded.size <= this.maxTiles) return;
-    const c = [...this.loaded].filter(t => t.selFrame < f - 30).sort((a, b) => a.selFrame - b.selFrame);
-    for (const t of c) { if (this.loaded.size <= this.maxTiles * .9) break; this.free(t); }
+    if (this.loaded.size <= this.maxTiles && this.bytes <= this.maxBytes) return;
+    const use = t => Math.max(t.selFrame, t.loadedFrame || 0), c = [...this.loaded].filter(t => use(t) < f - 90).sort((a, b) => use(a) - use(b));
+    for (const t of c) { if (this.loaded.size <= this.maxTiles * .85 && this.bytes <= this.maxBytes * .85) break; this.free(t); this.evicted++; }
   }
   // ---------- terreno ----------
   sampleGround(x, z) {
@@ -223,6 +229,6 @@ export class Tileset3D {
     }
     return best;
   }
-  stats() { return { loaded: this.loaded.size, pending: this.queue.length + this.active, visible: this.sel.length, failed: this.failed || 0 }; }
+  stats() { return { mb: Math.round(this.bytes / 1e6), evicted: this.evicted, loaded: this.loaded.size, pending: this.queue.length + this.active, visible: this.sel.length, failed: this.failed || 0 }; }
   dispose() { this.disposed = true; for (const t of [...this.loaded]) this.free(t); this.scene.remove(this.root); this.draco && this.draco.dispose(); }
 }
