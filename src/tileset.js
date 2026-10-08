@@ -123,7 +123,7 @@ export class Tileset3D {
     for (const t of this.loaded) t.holder.visible = t.selFrame === f;
     if (f % 10 === 0) {                      // si lo visible ya llena el tope de texturas, baja el detalle; con holgura, lo recupera
       const p = this.sel.length / this.maxTex;
-      if (p > 0.75) this.sseCur = Math.min(this.sseCur * 1.08, 160); else if (p < 0.45 && this.sseCur > this.sseBase) this.sseCur = Math.max(this.sseBase, this.sseCur * 0.97);
+      if (p > 0.85) this.sseCur = Math.min(this.sseCur * 1.05, Math.max(this.sseBase, 48)); else if (p < 0.6 && this.sseCur > this.sseBase) this.sseCur = Math.max(this.sseBase, this.sseCur * 0.97);
     }
     this.pump(f);
     if (f % 15 === 0) this.evict(f);
@@ -136,7 +136,8 @@ export class Tileset3D {
     if (!this.frustum.intersectsSphere(this._s)) return;
     const dist = Math.max(c.distanceTo(this.camera.position) - t.radius, 0.01), content = !!t.uri && !t.external, kids = t.children;
     if (t.external && t.state !== 2) { this.request(t, dist, f, true); return; }
-    const refine = !content || (kids.length > 0 && t.ge * this.k / dist > this.sseCur);
+    const thr = this.sseCur * (1 + dist / 400);                // tolerancia creciente con la distancia: cerca nítido, lejos simple
+    const refine = !content || (kids.length > 0 && t.ge * this.k / dist > thr);
     if (!refine || !kids.length) { if (content) this.select(t, dist, f); return; }
     if (t.refine === 'ADD') { if (content) this.select(t, dist, f); for (const k of kids) this.visit(k, f); return; }
     if (content && t.state === 2) {
@@ -238,14 +239,17 @@ export class Tileset3D {
     for (const t of c) { if (this.loaded.size <= this.maxTiles * .85 && this.bytes <= this.maxBytes * .85) break; this.free(t); this.evicted++; }
   }
   // ---------- terreno ----------
+  // Altura (y mundo) del suelo bajo (x,z). Solo cuenta el tile MÁS FINO que recibe el rayo: un tile grosero (cuya esfera también
+  // contiene al coche) puede estar cientos de metros más abajo y enterraría el mapa.
   sampleGround(x, z) {
-    const list = [];
-    for (const t of this.sel) { if (!t.meshes) continue; const c = this.local(t, this._c2); if (Math.hypot(c.x - x, c.z - z) < t.radius + 5) list.push(...t.meshes); }
-    if (!list.length || list.length > 60) return null;
+    const cand = [];
+    for (const t of this.sel) { if (!t.meshes) continue; const c = this.local(t, this._c2); if (Math.hypot(c.x - x, c.z - z) < t.radius + 5) cand.push(t); }
+    this.lastCand = cand.length; if (!cand.length) return null;
+    cand.sort((a, b) => a.ge - b.ge);
     let best = null; this.ray.far = 9000;
     for (const [dx, dz] of [[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]]) {
-      this.ray.set(new V3(x + dx, 4000, z + dz), DOWN); const h = this.ray.intersectObjects(list, false);
-      if (h.length) best = best === null ? h[0].point.y : Math.min(best, h[0].point.y);
+      this.ray.set(new V3(x + dx, 4000, z + dz), DOWN);
+      for (const t of cand) { const h = this.ray.intersectObjects(t.meshes, false); if (h.length) { best = best === null ? h[0].point.y : Math.min(best, h[0].point.y); break; } }
     }
     return best;
   }

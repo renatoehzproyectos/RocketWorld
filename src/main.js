@@ -124,9 +124,9 @@ async function boot() {
     if (ts) {
       groundT += dt;
       ts.setOY(oy);
-      if (follow && groundT > 0.25 && oy === 0) {                       // el suelo plano de RocketSim manda: el mundo sube/baja bajo el coche
+      if ((follow || !ts.hasGround) && groundT > 0.25 && (oy === 0 || !ts.hasGround)) {   // la 1.ª alineación se hace siempre (aunque oy ≠ 0); luego solo si «seguir terreno» y en suelo
         groundT = 0; const g = ts.sampleGround(carPos.x, carPos.z);
-        if (g !== null) { vTarget = ts.vOff - g; if (!ts.hasGround) { ts.hasGround = true; ts.setVOff(vTarget); } }
+        if (g !== null) { vTarget = ts.vOff - g; ts.lastG = g; if (!ts.hasGround || Math.abs(vTarget - ts.vOff) > 4) { ts.hasGround = true; ts.setVOff(vTarget); } }   // saltos grandes: corrección inmediata (nunca quedarse bajo tierra)
       }
       if (ts.hasGround) ts.setVOff(ts.vOff + (vTarget - ts.vOff) * (1 - Math.exp(-dt / 0.9)));
       ts.update(renderer);
@@ -137,7 +137,7 @@ async function boot() {
       if (ema > 24 && pr > 0.6) { pr = Math.max(0.6, pr - 0.1); resize(); } else if (ema < 14 && pr < maxPr) { pr = Math.min(pr + 0.1, maxPr); resize(); } }
     renderer.render(scene, camera);
     hudT += dt; if (hudT > 0.15) { hudT = 0; const s = tiles.stats();
-      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · tex ${z.tex}/${z.maxTex} · detalle ${z.sse}px (${z.mb} MB, -${z.evicted}) · ${z.visible} vis · ${z.pending} red · fallos ${z.failed}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
+      const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · tex ${z.tex}/${z.maxTex} · detalle ${z.sse}px (${z.mb} MB, -${z.evicted}) · ${z.visible} vis · ${z.pending} red · fallos ${z.failed} · vOff ${ts.vOff.toFixed(0)}m g ${ts.lastG === undefined ? '–' : ts.lastG.toFixed(0)}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
       hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen · alt ${Math.round(carPos.y + oy)} m\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\n${world} · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k`;
       const heap = performance.memory ? ` · heap ${Math.round(performance.memory.usedJSHeapSize / 1e6)} MB` : '';
       hud.textContent += `\narranques ${boots}${ctxLost ? ' · ¡CONTEXTO WEBGL PERDIDO!' : ''}${heap} · tex ${renderer.info.memory.textures} geo ${renderer.info.memory.geometries}`;
