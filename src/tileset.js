@@ -20,6 +20,7 @@ const isJson = u => /\.json(\?|$)/i.test(u || '');
 export class Tileset3D {
   constructor(scene, camera, o = {}) {
     Object.assign(this, { scene, camera, maxSSE: o.sse ?? 16, maxTiles: o.maxTiles ?? 300, maxReq: o.maxReq ?? 6, maxBytes: o.maxBytes ?? 500e6, lowMem: !!o.lowMem });
+    this.onEvent = o.onEvent || (() => {}); this.errSeen = {};
     this.bytes = 0; this.evicted = 0; this.maxTex = o.maxTex ?? 120; this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE;
     this.root = new THREE.Group(); scene.add(this.root);
     this.anchor = { lat: 0, lon: 0, h: 0 }; this.P0 = new V3(); this.M = new THREE.Matrix4(); this._T = new THREE.Matrix4();
@@ -184,7 +185,8 @@ export class Tileset3D {
     t.state = 1; this.active++;
     fetch(this.auth(t.uri)).then(async r => { if (!r.ok) { let b = ''; try { b = (await r.text()).replace(/\s+/g, ' ').slice(0, 110); } catch (_) {} throw new Error('HTTP ' + r.status + (b ? ' ' + b : '')); } return r.arrayBuffer(); })
       .then(buf => this.parse(t, buf))
-      .catch(e => { t.state = 3; t.retryAt = performance.now() + 8000; this.lastError = e.message; this.failed = (this.failed || 0) + 1; console.warn('3D Tiles:', e); })
+      .catch(e => { t.state = 3; t.retryAt = performance.now() + 8000; this.lastError = e.message; this.failed = (this.failed || 0) + 1; console.warn('3D Tiles:', e);
+        const k = String(e.message).slice(0, 50), c = this.errSeen[k] = (this.errSeen[k] || 0) + 1; if (c <= 3 || c % 25 === 0) this.onEvent('tile-error', `${e.message} (x${c}) ${String(t.uri).replace(/^https?:\/\/[^/]+/, '').slice(0, 70)}`); })
       .finally(() => { this.active--; });
   }
   extract(buf, out = []) {

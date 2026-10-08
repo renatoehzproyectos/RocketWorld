@@ -8,13 +8,16 @@ import { createTerrain } from './terrain.js';
 import { createCamera } from './camera.js';
 import { Tileset3D } from './tileset.js';
 import { initSettings } from './settings.js';
+import { createLog, bindLogUI, redact } from './debuglog.js';
 
 const $ = id => document.getElementById(id), status = t => $('status').textContent = t;
 const rot9 = r => { const a = new Array(9); for (let i = 0; i < 9; i++) a[i] = r.get(i); return a; };
 const coarse = matchMedia('(pointer:coarse)').matches;
 const RECENTER = 2600;           // uu: al pasar de aquí se devuelve el coche al centro de la arena (origen flotante)
 
+const log = createLog();
 async function boot() {
+  log.ev('arranque', 'boot() iniciado');
   status('Cargando RocketSim…');
   const RS = await RocketSimModule(); RS.init(); RS.createArena();
   const carId = RS.addCar(0);
@@ -45,15 +48,16 @@ async function boot() {
     scene.fog.near = 140; scene.fog.far = 620; attrib.textContent = '';
   };
   const applySettings = async s => {
+    log.ev('ajustes', `proveedor=${s.provider} clave=${redact(s.key)} asset=${s.asset || '-'} lat=${s.lat} lon=${s.lon} sse=${s.sse} maxTex=${s.maxTex} seguir=${s.follow}`);
     if (ts) { ts.dispose(); ts = null; }
     cfg = s;
     if (!s.key || (s.provider === 'ion-custom' && !s.asset)) { setProc(); return; }
     tiles.setEnabled(false); terrain.setGroundVisible(false);
     camera.near = 0.5; camera.far = coarse ? 6000 : 15000; camera.updateProjectionMatrix(); scene.fog.near = coarse ? 1200 : 2500; scene.fog.far = coarse ? 5500 : 12000;
     follow = s.follow; vTarget = 0;
-    const t = new Tileset3D(scene, camera, { sse: s.sse, maxTiles: coarse ? 160 : 380, maxReq: coarse ? 4 : 8, maxBytes: coarse ? 240e6 : 700e6, lowMem: coarse, maxTex: s.maxTex });
-    try { await t.init(s); ts = t; ui.status('Conectado. Cargando tiles…'); }
-    catch (e) { console.error(e); t.dispose(); setProc(); ui.status('Error: ' + e.message + '\nMostrando ciudad procedural.', true); }
+    const t = new Tileset3D(scene, camera, { onEvent: (t, m) => log.ev(t, m), sse: s.sse, maxTiles: coarse ? 160 : 380, maxReq: coarse ? 4 : 8, maxBytes: coarse ? 240e6 : 700e6, lowMem: coarse, maxTex: s.maxTex });
+    try { await t.init(s); ts = t; log.ev('3dtiles', 'tileset raíz cargado OK'); ui.status('Conectado. Cargando tiles…'); }
+    catch (e) { console.error(e); log.ev('3dtiles-init-ERROR', e.message); t.dispose(); setProc(); ui.status('Error: ' + e.message + '\nMostrando ciudad procedural.', true); }
   };
   const ui = initSettings(s => applySettings(s), coarse);
 
@@ -67,21 +71,26 @@ async function boot() {
   readCurr(); readQ(); carPrev.copy(carCurr); qPrev.copy(qCurr);
   tiles.prime(carCurr.x + ox, carCurr.z + oz, ox, oz);     // mundo inicial completo antes del primer frame
 
+  { const gl = renderer.getContext(), dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    log.setEnv([`UA: ${navigator.userAgent}`, `pantalla ${innerWidth}x${innerHeight} dpr ${devicePixelRatio} · res inicial ${pr} · táctil ${coarse} · núcleos ${navigator.hardwareConcurrency} · RAM ~${navigator.deviceMemory || '?'} GB`,
+      `GPU: ${dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '?'} · maxTextura ${gl.getParameter(gl.MAX_TEXTURE_SIZE)} · three r${THREE.REVISION}`,
+      `ajustes guardados: proveedor=${ui.get().provider} clave=${redact(ui.get().key)} lat=${ui.get().lat} lon=${ui.get().lon} sse=${ui.get().sse} maxTex=${ui.get().maxTex} seguir=${ui.get().follow}`].join('\n')); }
+  bindLogUI(log); log.ev('arranque', 'mundo listo');
   if (ui.get().key) applySettings(ui.get());
 
   let acc = 0, last = performance.now(), hudT = 0, perfT = 0, ema = 16, clock = 0;
   const hud = $('hud');
-  let boots = 1, ctxLost = false;
+  let boots = 1, ctxLost = false, selZero = false;
   try { boots = (+sessionStorage.getItem('rw.boots') || 0) + 1; sessionStorage.setItem('rw.boots', boots); } catch (_) {}
-  renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); ctxLost = true; });
-  renderer.domElement.addEventListener('webglcontextrestored', () => { ctxLost = false; });
+  renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); ctxLost = true; log.ev('WEBGL', 'CONTEXTO PERDIDO'); });
+  renderer.domElement.addEventListener('webglcontextrestored', () => { ctxLost = false; log.ev('WEBGL', 'contexto restaurado'); });
   $('loading').style.opacity = 0; setTimeout(() => $('loading').remove(), 600);
 
   function frame(now) {
     requestAnimationFrame(frame);
     const dt = Math.min((now - last) / 1000, 0.1); last = now; ema += (dt * 1000 - ema) * 0.05; acc += dt; clock += dt;
     if (input.takeCamToggle()) camCtl.toggle();
-    if (input.takeReset()) { AO = 0; oy = 0; spawn(); readCurr(); readQ(); carPrev.copy(carCurr); qPrev.copy(qCurr); }
+    if (input.takeReset()) { log.ev('reset', 'R: coche al origen'); AO = 0; oy = 0; spawn(); readCurr(); readQ(); carPrev.copy(carCurr); qPrev.copy(qCurr); }
     const ctl = input.poll();
     RS.setCarControls(carId, ctl.throttle, ctl.steer, ctl.pitch, ctl.yaw, ctl.roll, ctl.jump, ctl.boost, ctl.handbrake);
 
@@ -103,11 +112,12 @@ async function boot() {
       if (sx || sy) {
         p.x -= sx; p.y -= sy; ox += sx * UU_TO_M; oz -= sy * UU_TO_M; dirty = true;
         const dx = -sx * UU_TO_M, dz = sy * UU_TO_M; carPrev.x += dx; carPrev.z += dz; camCtl.shift(dx, dz);
+        log.ev('recentrado', `E${(sx * UU_TO_M).toFixed(1)}m N${(sy * UU_TO_M).toFixed(1)}m → origen (${ox.toFixed(0)}, ${oz.toFixed(0)})`);
         if (ts) ts.shift(sx * UU_TO_M, sy * UU_TO_M);          // RS x = Este, RS y = Norte
       }
       // Techo de RocketSim (2044 uu) esquivado: cerca del techo se baja el coche 1000 uu en la física y se sube el mundo lo mismo; al descender, al revés.
       const sz = p.z > 1800 ? 1000 : (AO > 0 && p.z < 300 ? -1000 : 0);
-      if (sz) { p.z -= sz; AO += sz; oy = AO * UU_TO_M; dirty = true; camCtl.shift(0, 0, -sz * UU_TO_M); }
+      if (sz) { log.ev('altura', `origen vertical ${sz > 0 ? '+' : '-'}1000uu → AO=${AO + sz}`); p.z -= sz; AO += sz; oy = AO * UU_TO_M; dirty = true; camCtl.shift(0, 0, -sz * UU_TO_M); }
       if (dirty) RS.setCarState(carId, p.x, p.y, p.z, v.x, v.y, v.z);
       const prevKeep = carCurr.clone(); if (sz) prevKeep.y -= sz * UU_TO_M; if (sx || sy) { prevKeep.x += -sx * UU_TO_M; prevKeep.z += sy * UU_TO_M; }
       carPrev.copy(prevKeep); readCurr(); readQ();
@@ -126,7 +136,9 @@ async function boot() {
       ts.setOY(oy);
       if ((follow || !ts.hasGround) && groundT > 0.25 && oy === 0) {      // la 1.ª alineación se hace siempre; luego solo si «seguir terreno»
         groundT = 0; const g = ts.sampleGround(carPos.x, carPos.z);
-        if (g !== null) { vTarget = ts.vOff - g; ts.lastG = g; if (!ts.hasGround || Math.abs(vTarget - ts.vOff) > 4) { ts.hasGround = true; ts.setVOff(vTarget); } }   // saltos grandes: corrección inmediata (nunca quedarse bajo tierra)
+        if (g !== null) { vTarget = ts.vOff - g; ts.lastG = g; if (!ts.hasGround || Math.abs(vTarget - ts.vOff) > 4) { log.ev('snap-suelo', `vOff ${ts.vOff.toFixed(1)} → ${vTarget.toFixed(1)} (g=${g.toFixed(1)}, candidatos=${ts.lastCand})`); ts.hasGround = true; ts.setVOff(vTarget); } }
+        else if (g === null && !ts.gNullLogged) { ts.gNullLogged = true; log.ev('suelo', `sin medida de suelo (candidatos=${ts.lastCand}, visibles=${ts.sel.length})`); }
+        if (g !== null) ts.gNullLogged = false;   // saltos grandes: corrección inmediata (nunca quedarse bajo tierra)
       }
       if (ts.hasGround) ts.setVOff(ts.vOff + (vTarget - ts.vOff) * (1 - Math.exp(-dt / 0.9)));
       ts.update(renderer);
@@ -136,6 +148,13 @@ async function boot() {
     perfT += dt; if (perfT > 2) { perfT = 0;
       if (ema > 24 && pr > 0.6) { pr = Math.max(0.6, pr - 0.1); resize(); } else if (ema < 14 && pr < maxPr) { pr = Math.min(pr + 0.1, maxPr); resize(); } }
     renderer.render(scene, camera);
+    {
+      const zs = ts ? ts.stats() : null, heap = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : null, inf = renderer.info;
+      if (zs) { if (zs.visible === 0 && !selZero) { selZero = true; log.ev('SIN-TILES', `0 visibles (cargados=${zs.loaded}, pend=${zs.pending}, vOff=${ts.vOff.toFixed(1)}, g=${ts.lastG === undefined ? '-' : ts.lastG.toFixed(1)}, cam.y=${camera.position.y.toFixed(1)})`); } else if (zs.visible > 0 && selZero) { selZero = false; log.ev('tiles-vuelven', `${zs.visible} visibles`); } }
+      log.frame([now, dt * 1000, 1000 / ema, carPos.x, carPos.y, carPos.z, speedUU * 0.036, st.isOnGround ? 1 : 0, ox, oz, AO, camera.position.x, camera.position.y, camera.position.z,
+        zs && zs.loaded, zs && zs.tex, zs && zs.visible, zs && zs.pending, ts && ts.active, zs && zs.failed, zs && zs.sse, ts && ts.vOff, ts && ts.lastG, ts && ts.lastCand, zs && zs.mb, zs && zs.evicted,
+        inf.render.calls, inf.render.triangles, inf.memory.textures, inf.memory.geometries, heap, ts && ts.hasGround ? 1 : 0, pr]);
+    }
     hudT += dt; if (hudT > 0.15) { hudT = 0; const s = tiles.stats();
       const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · tex ${z.tex}/${z.maxTex} · detalle ${z.sse}px (${z.mb} MB, -${z.evicted}) · ${z.visible} vis · ${z.pending} red · fallos ${z.failed} · vOff ${ts.vOff.toFixed(0)}m g ${ts.lastG === undefined ? '–' : ts.lastG.toFixed(0)}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
       hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen · alt ${Math.round(carPos.y + oy)} m\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\n${world} · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k`;
