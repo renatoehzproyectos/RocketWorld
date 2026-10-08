@@ -181,9 +181,9 @@ export class Tileset3D {
       const t = q[i];
       if (t.state !== 0) { q.splice(i, 1); t.queued = false; continue; }
       if (!t.external) {
-        const used = this.texCount + this.active;
-        if (used >= this.maxTex) { if (!t.needed || !this.evictOne(f)) { i++; continue; } }   // lleno: solo lo necesario, expulsando algo antiguo
-        else if (!t.needed && used >= this.maxTex * 0.85) { i++; continue; }                    // la precarga no usa el último 15 %
+        const lim = t.needed ? this.maxTex : this.maxTex * 0.85;   // la precarga no usa el último 15 %
+        let room = true; while (this.texCount + this.active >= lim) if (!this.evictOne(f)) { room = false; break; }   // lleno: libera tiles ocultos antiguos en vez de congelarse
+        if (!room) { i++; continue; }
       }
       q.splice(i, 1); t.queued = false; this.load(t);
     }
