@@ -138,13 +138,21 @@ export class Tileset3D {
     if (t.external && t.state !== 2) { this.request(t, dist, f, true); return; }
     const thr = this.sseCur * (1 + dist / 400);                // tolerancia creciente con la distancia: cerca nítido, lejos simple
     const refine = !content || (kids.length > 0 && t.ge * this.k / dist > thr);
-    if (!refine || !kids.length) { if (content) this.select(t, dist, f); return; }
+    if (!refine || !kids.length) {
+      if (content && t.state !== 2 && kids.length) { this.request(t, dist, f, true); for (const k of kids) this.fallback(k, f, 0); return; }   // padre aún sin cargar: mientras llega, muestra los hijos ya cargados (sin huecos al bajar detalle)
+      if (content) this.select(t, dist, f); return;
+    }
     if (t.refine === 'ADD') { if (content) this.select(t, dist, f); for (const k of kids) this.visit(k, f); return; }
     if (content && t.state === 2) {
       let ok = true; for (const k of kids) if (!this.ready(k, 0)) { ok = false; this.prefetch(k, f, 0); }
       if (!ok) { this.select(t, dist, f); return; }
     } else if (content) this.request(t, dist, f, true);
     for (const k of kids) this.visit(k, f);
+  }
+  fallback(k, f, d) {
+    if (d > 6 || !this.inView(k)) return;
+    if (k.uri && !k.external && k.state === 2) { k.selFrame = f; this.sel.push(k); return; }
+    for (const c of k.children) this.fallback(c, f, d + 1);
   }
   select(t, dist, f) { if (t.state === 2) { t.selFrame = f; this.sel.push(t); } else this.request(t, dist, f, true); }
   ready(k, d) {
