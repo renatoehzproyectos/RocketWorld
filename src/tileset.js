@@ -20,7 +20,7 @@ const isJson = u => /\.json(\?|$)/i.test(u || '');
 export class Tileset3D {
   constructor(scene, camera, o = {}) {
     Object.assign(this, { scene, camera, maxSSE: o.sse ?? 16, maxTiles: o.maxTiles ?? 300, maxReq: o.maxReq ?? 6, maxBytes: o.maxBytes ?? 500e6, lowMem: !!o.lowMem });
-    this.bytes = 0; this.evicted = 0; this.maxTex = Math.min(o.maxTex ?? 120, 96);   // tope duro: nunca llegar a 100 texturas (margen para tiles con varias) this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE;
+    this.bytes = 0; this.evicted = 0; this.maxTex = Math.min(o.maxTex ?? 120, 96); this.texCount = 0; this.sseBase = this.maxSSE; this.sseCur = this.maxSSE;   // maxTex: tope duro, nunca llegar a 100 texturas
     this.root = new THREE.Group(); scene.add(this.root);
     this.anchor = { lat: 0, lon: 0, h: 0 }; this.P0 = new V3(); this.M = new THREE.Matrix4(); this._T = new THREE.Matrix4();
     this.frame = 0; this.loaded = new Set(); this.queue = []; this.active = 0; this.sel = []; this.rootTile = null;
