@@ -1,7 +1,7 @@
 // Log de depuración en vivo: 1 registro por frame (anillo de 30 s) + eventos + resumen con anomalías, copiable con un botón.
 const COLS = [['t', 0], ['dt', 1], ['fps', 0], ['x', 1], ['y', 1], ['z', 1], ['kmh', 0], ['gnd', 0], ['ox', 1], ['oz', 1], ['AO', 0],
   ['cx', 1], ['cy', 1], ['cz', 1], ['loaded', 0], ['tex', 0], ['sel', 0], ['pend', 0], ['act', 0], ['fail', 0], ['sse', 0], ['vOff', 1], ['g', 1],
-  ['cand', 0], ['MB', 0], ['evict', 0], ['calls', 0], ['tris', 0], ['rtex', 0], ['rgeo', 0], ['heap', 0], ['hasG', 0], ['res', 1]];
+  ['cand', 0], ['MB', 0], ['evict', 0], ['calls', 0], ['tris', 0], ['rtex', 0], ['rgeo', 0], ['heap', 0], ['hasG', 0], ['res', 1], ['h', 1], ['hS', 1]];
 const C = Object.fromEntries(COLS.map(([n], i) => [n, i]));
 const MAXF = 1800, MAXE = 500;
 export const redact = k => (k ? k.slice(0, 4) + '…(' + k.length + ' car.)' : '(vacío)');
@@ -46,6 +46,7 @@ export function createLog() {
       const vr = mm('vOff'); L.push(`vOff ${vr[0].toFixed(1)}..${vr[1].toFixed(1)} m (mayor salto/frame ${step.toFixed(1)} m) · g ${g.length ? Math.min(...g).toFixed(1) + '..' + Math.max(...g).toFixed(1) : 'sin medida'}`);
       if (step > 3) warn.push(`vOff da saltos de ${step.toFixed(1)} m: la alineación vertical oscila`);
       if (!g.length) warn.push('nunca se midió suelo (g vacío): el mapa no se puede alinear con el coche');
+      const hh = col('h'), hs = col('hS'); if (hh.length) L.push(`suelo h (bruto) ${Math.min(...hh).toFixed(0)}..${Math.max(...hh).toFixed(0)} m · estable ${hs.length ? Math.min(...hs).toFixed(0) + '..' + Math.max(...hs).toFixed(0) : '-'} m · muestras atípicas registradas: ${events.filter(e => e.includes('g-atipico')).length}`);
       const cy = mm('cy'); L.push(`cámara y local ${cy[0].toFixed(1)}..${cy[1].toFixed(1)} m`);
     }
     const cy = mm('y'); L.push(`coche y ${cy[0].toFixed(1)}..${cy[1].toFixed(1)} m · velocidad máx ${mm('kmh')[1].toFixed(0)} km/h · AO ${mm('AO')[0]}..${mm('AO')[1]} uu`);

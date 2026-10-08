@@ -248,11 +248,12 @@ export class Tileset3D {
     for (const t of this.sel) { if (!t.meshes) continue; const c = this.local(t, this._c2); if (Math.hypot(c.x - x, c.z - z) < t.radius + 5) cand.push(t); }
     this.lastCand = cand.length; if (!cand.length) return null;
     cand.sort((a, b) => a.ge - b.ge);
-    let best = null; this.ray.far = 9000;
-    for (const [dx, dz] of [[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]]) {
-      this.ray.set(new V3(x + dx, 4000, z + dz), DOWN);
-      for (const t of cand) { const h = this.ray.intersectObjects(t.meshes, false); if (h.length) { best = best === null ? h[0].point.y : Math.min(best, h[0].point.y); break; } }
-    }
+    const OFFS = [[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]], ray = this.ray; ray.far = 9000;
+    const cast = (t, dx, dz) => { ray.set(new V3(x + dx, 4000, z + dz), DOWN); const h = ray.intersectObjects(t.meshes, false); return h.length ? h[0].point.y : null; };
+    let tile = null;                                                  // un solo tile para todos los rayos: mezclar LODs daba saltos de ±300–1000 m
+    for (const t of cand) { for (const [dx, dz] of OFFS) if (cast(t, dx, dz) !== null) { tile = t; break; } if (tile) break; }
+    if (!tile) return null; this.lastTile = tile.ge;
+    let best = null; for (const [dx, dz] of OFFS) { const y = cast(tile, dx, dz); if (y !== null) best = best === null ? y : Math.min(best, y); }
     return best;
   }
   stats() { return { tex: this.texCount, maxTex: this.maxTex, sse: Math.round(this.sseCur), mb: Math.round(this.bytes / 1e6), evicted: this.evicted, loaded: this.loaded.size, pending: this.queue.length + this.active, visible: this.sel.length, failed: this.failed || 0 }; }

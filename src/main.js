@@ -50,14 +50,25 @@ async function boot() {
   const applySettings = async s => {
     log.ev('ajustes', `proveedor=${s.provider} clave=${redact(s.key)} asset=${s.asset || '-'} lat=${s.lat} lon=${s.lon} sse=${s.sse} maxTex=${s.maxTex} seguir=${s.follow}`);
     if (ts) { ts.dispose(); ts = null; }
-    cfg = s;
+    cfg = s; hStable = null; hs = [];
     if (!s.key || (s.provider === 'ion-custom' && !s.asset)) { setProc(); return; }
     tiles.setEnabled(false); terrain.setGroundVisible(false);
     camera.near = 0.5; camera.far = coarse ? 6000 : 15000; camera.updateProjectionMatrix(); scene.fog.near = coarse ? 1200 : 2500; scene.fog.far = coarse ? 5500 : 12000;
     follow = s.follow; vTarget = 0;
-    const t = new Tileset3D(scene, camera, { onEvent: (t, m) => log.ev(t, m), sse: s.sse, maxTiles: coarse ? 160 : 380, maxReq: coarse ? 4 : 8, maxBytes: coarse ? 240e6 : 700e6, lowMem: coarse, maxTex: s.maxTex });
+    const t = new Tileset3D(scene, camera, { onEvent: (t, m) => log.ev(t, m), sse: s.sse, maxTiles: Math.round(s.maxTex * 1.15) + 20, maxReq: coarse ? 4 : 8, maxBytes: coarse ? 240e6 : 700e6, lowMem: coarse, maxTex: s.maxTex });
     try { await t.init(s); ts = t; log.ev('3dtiles', 'tileset raíz cargado OK'); ui.status('Conectado. Cargando tiles…'); }
     catch (e) { console.error(e); log.ev('3dtiles-init-ERROR', e.message); t.dispose(); setProc(); ui.status('Error: ' + e.message + '\nMostrando ciudad procedural.', true); }
+  };
+  // Filtro del suelo: mediana de las últimas 9 medidas de h (altura del suelo en el marco del tileset, independiente de vOff).
+  // Robusta a atípicos de ±300–1000 m (tiles groseros, azoteas) y sin depender del primer dato.
+  let hStable = null, hs = [], hOut = 0;
+  const feedGround = h => {
+    ts.lastH = h; hs.push(h); if (hs.length > 9) hs.shift();
+    const srt = [...hs].sort((a, b) => a - b), med = srt[srt.length >> 1];
+    if (Math.abs(h - med) > 25 && (hOut++ % 6 === 0)) log.ev('g-atipico', `h=${h.toFixed(1)} vs mediana ${med.toFixed(1)} (n=${hs.length}, tile ge=${ts.lastTile})`);
+    if (hStable === null) { ts.hasGround = true; ts.setVOff(-med); log.ev('suelo-inicial', `h=${med.toFixed(1)} → vOff=${(-med).toFixed(1)} (tile ge=${ts.lastTile})`); }
+    else if (Math.abs(med - hStable) > 30) { log.ev('suelo-cambio', `mediana ${hStable.toFixed(1)} → ${med.toFixed(1)} (salto grande: recolocación inmediata)`); ts.setVOff(-med); }
+    hStable = med; vTarget = -med;
   };
   const ui = initSettings(s => applySettings(s), coarse);
 
@@ -136,11 +147,10 @@ async function boot() {
       ts.setOY(oy);
       if ((follow || !ts.hasGround) && groundT > 0.25 && oy === 0) {      // la 1.ª alineación se hace siempre; luego solo si «seguir terreno»
         groundT = 0; const g = ts.sampleGround(carPos.x, carPos.z);
-        if (g !== null) { vTarget = ts.vOff - g; ts.lastG = g; if (!ts.hasGround || Math.abs(vTarget - ts.vOff) > 4) { log.ev('snap-suelo', `vOff ${ts.vOff.toFixed(1)} → ${vTarget.toFixed(1)} (g=${g.toFixed(1)}, candidatos=${ts.lastCand})`); ts.hasGround = true; ts.setVOff(vTarget); } }
-        else if (g === null && !ts.gNullLogged) { ts.gNullLogged = true; log.ev('suelo', `sin medida de suelo (candidatos=${ts.lastCand}, visibles=${ts.sel.length})`); }
-        if (g !== null) ts.gNullLogged = false;   // saltos grandes: corrección inmediata (nunca quedarse bajo tierra)
+        if (g !== null) { ts.lastG = g; feedGround(g - ts.vOff); if (ts.gNullLogged) ts.gNullLogged = false; }   // h = altura del suelo en el marco del tileset (no depende de vOff)
+        else if (!ts.gNullLogged) { ts.gNullLogged = true; log.ev('suelo', `sin medida de suelo (candidatos=${ts.lastCand}, visibles=${ts.sel.length})`); }
       }
-      if (ts.hasGround) ts.setVOff(ts.vOff + (vTarget - ts.vOff) * (1 - Math.exp(-dt / 0.9)));
+      if (ts.hasGround) ts.setVOff(ts.vOff + (vTarget - ts.vOff) * (1 - Math.exp(-dt / 0.35)));
       ts.update(renderer);
     } else { tiles.update(carPos.x + ox, carPos.z + oz, ox, oz); tiles.setOffsetY(oy); }
     terrain.update(camera, ox, oz, clock, oy);
@@ -153,7 +163,7 @@ async function boot() {
       if (zs) { if (zs.visible === 0 && !selZero) { selZero = true; log.ev('SIN-TILES', `0 visibles (cargados=${zs.loaded}, pend=${zs.pending}, vOff=${ts.vOff.toFixed(1)}, g=${ts.lastG === undefined ? '-' : ts.lastG.toFixed(1)}, cam.y=${camera.position.y.toFixed(1)})`); } else if (zs.visible > 0 && selZero) { selZero = false; log.ev('tiles-vuelven', `${zs.visible} visibles`); } }
       log.frame([now, dt * 1000, 1000 / ema, carPos.x, carPos.y, carPos.z, speedUU * 0.036, st.isOnGround ? 1 : 0, ox, oz, AO, camera.position.x, camera.position.y, camera.position.z,
         zs && zs.loaded, zs && zs.tex, zs && zs.visible, zs && zs.pending, ts && ts.active, zs && zs.failed, zs && zs.sse, ts && ts.vOff, ts && ts.lastG, ts && ts.lastCand, zs && zs.mb, zs && zs.evicted,
-        inf.render.calls, inf.render.triangles, inf.memory.textures, inf.memory.geometries, heap, ts && ts.hasGround ? 1 : 0, pr]);
+        inf.render.calls, inf.render.triangles, inf.memory.textures, inf.memory.geometries, heap, ts && ts.hasGround ? 1 : 0, pr, ts && ts.lastH, ts && hStable]);
     }
     hudT += dt; if (hudT > 0.15) { hudT = 0; const s = tiles.stats();
       const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · tex ${z.tex}/${z.maxTex} · detalle ${z.sse}px (${z.mb} MB, -${z.evicted}) · ${z.visible} vis · ${z.pending} red · fallos ${z.failed} · vOff ${ts.vOff.toFixed(0)}m g ${ts.lastG === undefined ? '–' : ts.lastG.toFixed(0)}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
