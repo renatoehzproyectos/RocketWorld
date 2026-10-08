@@ -45,8 +45,8 @@ export function createTerrain(scene) {
   mount.renderOrder = -4; mount.frustumCulled = false; scene.add(mount);
   return {
     setGroundVisible(v) { ground.visible = v; mount.visible = v; },
-    update(camera, ox, oz, t) {
-      ground.position.set(camera.position.x, 0, camera.position.z); sky.position.copy(camera.position); mount.position.set(camera.position.x, 0, camera.position.z);
+    update(camera, ox, oz, t, oy = 0) {
+      ground.position.set(camera.position.x, -oy, camera.position.z); sky.position.copy(camera.position); mount.position.set(camera.position.x, -oy, camera.position.z);
       uni.uOM.value.set(((ox % 44) + 44) % 44, ((oz % 44) + 44) % 44); uni.uO.value.set(ox, oz); uni.uT.value = t;
     },
   };

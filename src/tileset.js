@@ -23,7 +23,7 @@ export class Tileset3D {
     this.root = new THREE.Group(); scene.add(this.root);
     this.anchor = { lat: 0, lon: 0, h: 0 }; this.P0 = new V3(); this.M = new THREE.Matrix4(); this._T = new THREE.Matrix4();
     this.frame = 0; this.loaded = new Set(); this.queue = []; this.active = 0; this.sel = []; this.rootTile = null;
-    this.vOff = 0; this.hasGround = false; this.disposed = false; this.copyright = ''; this.lastError = '';
+    this.vOff = 0; this.oy = 0; this.hasGround = false; this.disposed = false; this.copyright = ''; this.lastError = '';
     this.frustum = new THREE.Frustum(); this._pm = new THREE.Matrix4(); this._c = new V3(); this._c2 = new V3(); this._s = new THREE.Sphere(); this.k = 1000;
     this.gltf = new THREE.GLTFLoader(); this.ray = new THREE.Raycaster();
     if (THREE.DRACOLoader) { this.draco = new THREE.DRACOLoader(); this.draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/draco/gltf/'); this.gltf.setDRACOLoader(this.draco); }
@@ -109,8 +109,9 @@ export class Tileset3D {
     const r = h.userData.rtc; if (r) h.matrix.multiply(this._T.makeTranslation(r[0], r[1], r[2]));
     h.matrix.multiply(Y2Z); h.updateMatrixWorld(true);
   }
-  setVOff(y) { this.vOff = y; this.root.position.y = y; this.root.updateMatrixWorld(true); }
-  local(t, out) { out.copy(t.center).applyMatrix4(this.M); out.y += this.vOff; return out; }
+  setVOff(y) { this.vOff = y; this.root.position.y = y - this.oy; this.root.updateMatrixWorld(true); }
+  setOY(v) { if (v !== this.oy) { this.oy = v; this.setVOff(this.vOff); } }   // desplazamiento vertical del origen (vuelo por encima del techo de RocketSim)
+  local(t, out) { out.copy(t.center).applyMatrix4(this.M); out.y += this.vOff - this.oy; return out; }
   // ---------- recorrido ----------
   update(renderer) {
     if (!this.rootTile || this.disposed) return;

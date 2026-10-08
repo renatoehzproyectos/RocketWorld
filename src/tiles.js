@@ -37,7 +37,7 @@ export function createTiles(scene, collision, { radius = 8, budget = 3 } = {}) {
     tiles.set(key, t);
   }
   function update(ax, az, ox, oz, all = false) {
-    root.position.set(-ox, 0, -oz);
+    root.position.x = -ox; root.position.z = -oz;
     const ci = Math.floor(ax / T), cj = Math.floor(az / T), k = ci + ',' + cj;
     if (k !== lastKey || pending > 0) {
       lastKey = k; queue.length = 0;
@@ -57,6 +57,7 @@ export function createTiles(scene, collision, { radius = 8, budget = 3 } = {}) {
   let enabled = true;
   const reset = () => { for (const t of tiles.values()) release(t); tiles.clear(); queue.length = 0; lastKey = ''; pending = 0; pools.forEach(p => p.flush()); };
   return {
+    setOffsetY(y) { root.position.y = -y; },
     setEnabled(v) { if (v === enabled) return; enabled = v; root.visible = v; if (!v) reset(); },
     update: (...a) => { if (enabled) update(...a); }, prime(ax, az, ox, oz) { update(ax, az, ox, oz, true); },
     stats: () => ({ tiles: tiles.size, pending, houses: bodies.used, palms: palms.used }),

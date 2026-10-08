@@ -5,7 +5,7 @@ export function createCamera(camera) {
   let mode = 0, ready = false, fov = 80;
   return {
     toggle() { mode = (mode + 1) % 2; },
-    shift(dx, dz) { pos.x += dx; pos.z += dz; look.x += dx; look.z += dz; },   // recentrado del origen flotante
+    shift(dx, dz, dy = 0) { pos.x += dx; pos.z += dz; pos.y += dy; look.x += dx; look.z += dz; look.y += dy; },   // recentrado del origen flotante
     update(dt, carPos, carQuat, vel, speedMS, onGround, topAt) {
       fwd.set(1, 0, 0).applyQuaternion(carQuat); dir.set(fwd.x, 0, fwd.z);
       if (!onGround && Math.hypot(vel.x, vel.z) > 6) dir.set(vel.x, 0, vel.z);

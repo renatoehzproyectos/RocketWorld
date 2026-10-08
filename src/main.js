@@ -58,12 +58,12 @@ async function boot() {
   const ui = initSettings(s => applySettings(s), coarse);
 
   // Origen flotante: abs(three, m) = local + origin. RocketSim siempre trabaja cerca del centro de la arena.
-  let ox = 0, oz = 0;
+  let ox = 0, oz = 0, AO = 0, oy = 0;   // AO: altura (uu) que el origen vertical absorbe → el coche puede volar por encima del techo de RocketSim (oy en m)
   const carPrev = new THREE.Vector3(), carCurr = new THREE.Vector3(), carPos = new THREE.Vector3(), qPrev = new THREE.Quaternion(), qCurr = new THREE.Quaternion(), vel3 = new THREE.Vector3();
   let st;
   const readCurr = () => { st = RS.getCarState(carId); rsToThree(st.pos.x, st.pos.y, st.pos.z, carCurr); };
   const readQ = () => { qPrev.copy(qCurr); rotToQuat(rot9(st.rot), qCurr); if (qPrev.dot(qCurr) < 0) qCurr.set(-qCurr.x, -qCurr.y, -qCurr.z, -qCurr.w); };
-  const topAt = (x, z) => collision.topAt((x + ox) * 50, -(z + oz) * 50);
+  const topAt = (x, z) => Math.max(0, collision.topAt((x + ox) * 50, -(z + oz) * 50) - oy);
   readCurr(); readQ(); carPrev.copy(carCurr); qPrev.copy(qCurr);
   tiles.prime(carCurr.x + ox, carCurr.z + oz, ox, oz);     // mundo inicial completo antes del primer frame
 
@@ -77,7 +77,7 @@ async function boot() {
     requestAnimationFrame(frame);
     const dt = Math.min((now - last) / 1000, 0.1); last = now; ema += (dt * 1000 - ema) * 0.05; acc += dt; clock += dt;
     if (input.takeCamToggle()) camCtl.toggle();
-    if (input.takeReset()) { spawn(); readCurr(); readQ(); carPrev.copy(carCurr); qPrev.copy(qCurr); }
+    if (input.takeReset()) { AO = 0; oy = 0; spawn(); readCurr(); readQ(); carPrev.copy(carCurr); qPrev.copy(qCurr); }
     const ctl = input.poll();
     RS.setCarControls(carId, ctl.throttle, ctl.steer, ctl.pitch, ctl.yaw, ctl.roll, ctl.jump, ctl.boost, ctl.handbrake);
 
@@ -92,8 +92,8 @@ async function boot() {
         const sp = Math.hypot(v.x, v.y, v.z); if (sp > 2300) { const k = 2300 / sp; v.x *= k; v.y *= k; v.z *= k; } dirty = true;
       }
       const OX = ox * 50, OY = -oz * 50;      // origen en uu abs (RocketSim)
-      const hit = collision.resolve({ x: p.x + OX, y: p.y + OY, z: p.z }, v, 70, hb.z * 0.5);
-      if (hit) { p = { x: hit.x - OX, y: hit.y - OY, z: hit.z }; v = { x: hit.vx, y: hit.vy, z: hit.vz }; dirty = true; }
+      const hit = collision.resolve({ x: p.x + OX, y: p.y + OY, z: p.z + AO }, v, 70, hb.z * 0.5);
+      if (hit) { p = { x: hit.x - OX, y: hit.y - OY, z: hit.z - AO }; v = { x: hit.vx, y: hit.vy, z: hit.vz }; dirty = true; }
       // Recentrado: la arena de RocketSim es finita; mantenemos al coche en su zona plana y movemos el origen del mundo.
       const sx = Math.abs(p.x) > RECENTER ? p.x : 0, sy = Math.abs(p.y) > RECENTER ? p.y : 0;
       if (sx || sy) {
@@ -101,36 +101,40 @@ async function boot() {
         const dx = -sx * UU_TO_M, dz = sy * UU_TO_M; carPrev.x += dx; carPrev.z += dz; camCtl.shift(dx, dz);
         if (ts) ts.shift(sx * UU_TO_M, sy * UU_TO_M);          // RS x = Este, RS y = Norte
       }
+      // Techo de RocketSim (2044 uu) esquivado: cerca del techo se baja el coche 1000 uu en la física y se sube el mundo lo mismo; al descender, al revés.
+      const sz = p.z > 1800 ? 1000 : (AO > 0 && p.z < 300 ? -1000 : 0);
+      if (sz) { p.z -= sz; AO += sz; oy = AO * UU_TO_M; dirty = true; camCtl.shift(0, 0, -sz * UU_TO_M); }
       if (dirty) RS.setCarState(carId, p.x, p.y, p.z, v.x, v.y, v.z);
-      const prevKeep = carCurr.clone(); if (sx || sy) { prevKeep.x += -sx * UU_TO_M; prevKeep.z += sy * UU_TO_M; }
+      const prevKeep = carCurr.clone(); if (sz) prevKeep.y -= sz * UU_TO_M; if (sx || sy) { prevKeep.x += -sx * UU_TO_M; prevKeep.z += sy * UU_TO_M; }
       carPrev.copy(prevKeep); readCurr(); readQ();
     }
     const alpha = Math.min(Math.max(acc / TICK_TIME, 0), 1);
     carPos.lerpVectors(carPrev, carCurr, alpha);
     const q = vehicle.group.quaternion.copy(qPrev).slerp(qCurr, alpha); vehicle.group.position.copy(carPos);
     const speedUU = Math.hypot(st.vel.x, st.vel.y, st.vel.z); vehicle.update(dt, ctl.boost);
-    const hgt = Math.max(carPos.y, 0.3); shadow.position.set(carPos.x, 0.05, carPos.z); shadow.scale.setScalar(Math.max(.4, 1.3 - hgt / 25)); shadow.material.opacity = Math.max(.08, .38 - hgt / 40);
+    const hgt = Math.max(carPos.y + oy, 0.3); shadow.position.set(carPos.x, 0.05 - oy, carPos.z); shadow.scale.setScalar(Math.max(.4, 1.3 - hgt / 25)); shadow.material.opacity = Math.max(.08, .38 - hgt / 40);
 
     rsToThree(st.vel.x, st.vel.y, st.vel.z, vel3); vel3.multiplyScalar(50);
     camCtl.update(dt, carPos, q, vel3, speedUU * UU_TO_M, st.isOnGround, topAt);
     camera.updateMatrixWorld();
     if (ts) {
       groundT += dt;
-      if (follow && groundT > 0.25) {                       // el suelo plano de RocketSim manda: el mundo sube/baja bajo el coche
+      ts.setOY(oy);
+      if (follow && groundT > 0.25 && oy === 0) {                       // el suelo plano de RocketSim manda: el mundo sube/baja bajo el coche
         groundT = 0; const g = ts.sampleGround(carPos.x, carPos.z);
         if (g !== null) { vTarget = ts.vOff - g; if (!ts.hasGround) { ts.hasGround = true; ts.setVOff(vTarget); } }
       }
       if (ts.hasGround) ts.setVOff(ts.vOff + (vTarget - ts.vOff) * (1 - Math.exp(-dt / 0.9)));
       ts.update(renderer);
-    } else { tiles.update(carPos.x + ox, carPos.z + oz, ox, oz); }
-    terrain.update(camera, ox, oz, clock);
+    } else { tiles.update(carPos.x + ox, carPos.z + oz, ox, oz); tiles.setOffsetY(oy); }
+    terrain.update(camera, ox, oz, clock, oy);
 
     perfT += dt; if (perfT > 2) { perfT = 0;
       if (ema > 24 && pr > 0.6) { pr = Math.max(0.6, pr - 0.1); resize(); } else if (ema < 14 && pr < maxPr) { pr = Math.min(pr + 0.1, maxPr); resize(); } }
     renderer.render(scene, camera);
     hudT += dt; if (hudT > 0.15) { hudT = 0; const s = tiles.stats();
       const world = ts ? (() => { const z = ts.stats(); return `3D Tiles ${z.loaded} cargados · ${z.visible} visibles · ${z.pending} en red · fallos ${z.failed}${ts.lastError ? ' · ' + ts.lastError : ''}`; })() : `tiles ${s.tiles} (+${s.pending}) · casas ${s.houses} · palmeras ${s.palms}`;
-      hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\n${world} · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k`;
+      hud.textContent = `${Math.round(speedUU * 0.036)} km/h · ${st.isOnGround ? 'suelo' : 'aire'} · ${(Math.hypot(carPos.x + ox, carPos.z + oz) / 1000).toFixed(2)} km del origen · alt ${Math.round(carPos.y + oy)} m\n${(1000 / ema).toFixed(0)} fps · res ${pr.toFixed(1)}\n${world} · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k`;
       if (ts) attrib.textContent = ts.copyright ? 'Datos: ' + ts.copyright : ''; }
   }
   requestAnimationFrame(frame);

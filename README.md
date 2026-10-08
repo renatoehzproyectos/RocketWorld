@@ -25,6 +25,6 @@ Botón ⚙ → elige fuente (Google Photorealistic 3D Tiles con API key de Googl
 - Google exige mostrar atribución (se muestra abajo a la derecha) y su logotipo según sus términos.
 
 ## Limitaciones
-- El techo de RocketSim (~41 m) sigue activo: está dentro del WASM. Quitarlo requiere recompilar RocketSim sin arena.
+- El techo de RocketSim (~41 m) está dentro del WASM, pero se esquiva con un origen vertical flotante (`AO` en `main.js`): el coche puede volar a cualquier altura. Probado con la física real hasta ~154 m.
 - Con 3D Tiles reales no hay colisión con edificios (la malla fotogramétrica no es sólida para RocketSim): el coche conduce sobre un plano y el mundo sube/baja bajo él ("seguir el terreno").
 - Probado en Node con tilesets sintéticos; no con servidores reales de Google/Cesium ni en navegador.
