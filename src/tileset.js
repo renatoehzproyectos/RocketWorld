@@ -78,9 +78,9 @@ export class Tileset3D {
   makeTile(j, parent, baseUrl) {
     const local = j.transform ? new THREE.Matrix4().fromArray(j.transform) : new THREE.Matrix4();
     const uri = j.content?.uri ?? j.content?.url, abs = uri ? inherit(uri, baseUrl) : null;
-    const t = { parent, children: [], uri: abs, external: !!abs && isJson(abs), state: 0, queued: false, ge: j.geometricError ?? 0, selFrame: -1,
+    const t = { parent, children: [], uri: abs, external: !!abs && isJson(abs), state: 0, queued: false, ge: j.geometricError ?? 0, selFrame: -1, protectFrame: -1,
       refine: (j.refine || parent?.refine || 'REPLACE').toUpperCase(), world: parent ? parent.world.clone().multiply(local) : local, center: new V3(), radius: 0,
-      holder: null, meshes: null, bytes: 0, copyright: '', prio: 0, qf: 0, retryAt: 0 };
+      holder: null, meshes: null, bytes: 0, copyright: '', prio: 0, qf: 0, retryAt: 0, needed: false };
     this.bound(t, j.boundingVolume);
     for (const c of j.children || []) t.children.push(this.makeTile(c, t, baseUrl));
     return t;
@@ -121,10 +121,12 @@ export class Tileset3D {
     this._pm.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); this.frustum.setFromProjectionMatrix(this._pm);
     this.k = renderer.domElement.height / (2 * Math.tan(cam.fov * Math.PI / 360));
     this.sel.length = 0; this.visit(this.rootTile, f);
+    // Solo los tiles seleccionados se renderizan. protectFrame evita evicción del padre, no lo muestra (evita solapamiento).
     for (const t of this.loaded) t.holder.visible = t.selFrame === f;
-    if (f % 10 === 0) {                      // si lo visible ya llena el tope de texturas, baja el detalle; con holgura, lo recupera
+    if (f % 10 === 0) {                      // histéresis: umbrales separados para subir/bajar SSE (evita oscilación)
       const p = this.sel.length / this.maxTex;
-      if (p > 0.85) this.sseCur = Math.min(this.sseCur * 1.05, Math.max(this.sseBase, this.sseDyn)); else if (p < 0.6 && this.sseCur > this.sseBase) this.sseCur = Math.max(this.sseBase, this.sseCur * 0.97);
+      if (p > 0.90) this.sseCur = Math.min(this.sseCur * 1.04, Math.max(this.sseBase, this.sseDyn));
+      else if (p < 0.50 && this.sseCur > this.sseBase) this.sseCur = Math.max(this.sseBase, this.sseCur * 0.96);
     }
     this.pump(f);
     if (f % 15 === 0) this.evict(f);
@@ -137,26 +139,43 @@ export class Tileset3D {
     if (!this.frustum.intersectsSphere(this._s)) return;
     const dist = Math.max(c.distanceTo(this.camera.position) - t.radius, 0.01), content = !!t.uri && !t.external, kids = t.children;
     if (t.external && t.state !== 2) { this.request(t, dist, f, true); return; }
-    const thr = this.sseCur * (1 + dist / 400);                // tolerancia creciente con la distancia: cerca nítido, lejos simple
-    const refine = !content || (kids.length > 0 && t.ge * this.k / dist > thr);
-    if (!refine || !kids.length) { if (content) this.select(t, dist, f); return; }
+    // Umbral de refinamiento con histéresis: refinar solo por encima de thrHi; volver al padre solo por debajo de thrLo
+    const base = this.sseCur * (1 + dist / 400);
+    const thrHi = base, thrLo = base * 0.72;
+    const sse = t.ge * this.k / dist;
+    const wasRefined = t._refined === true;
+    const refine = !content || (kids.length > 0 && (wasRefined ? sse > thrLo : sse > thrHi));
+    if (!refine || !kids.length) { t._refined = false; if (content) this.select(t, dist, f); return; }
     if (t.refine === 'ADD') { if (content) this.select(t, dist, f); for (const k of kids) this.visit(k, f); return; }
+    // REPLACE: el padre permanece visible y protegido hasta que TODOS los hijos necesarios estén listos para render
     if (content && t.state === 2) {
       let ok = true; for (const k of kids) if (!this.ready(k, 0)) { ok = false; this.prefetch(k, f, 0); }
-      if (!ok) { this.select(t, dist, f); return; }
-    } else if (content) this.request(t, dist, f, true);
+      if (!ok) { t._refined = false; this.select(t, dist, f); return; }
+      // Hijos listos: marcar padre como protegido (no evictar) y no mostrarlo; los hijos cubren la región
+      t._refined = true; t.protectFrame = f;
+    } else if (content) { this.request(t, dist, f, true); return; }
     for (const k of kids) this.visit(k, f);
   }
-  select(t, dist, f) { if (t.state === 2) { t.selFrame = f; this.sel.push(t); } else this.request(t, dist, f, true); }
+  select(t, dist, f) {
+    if (t.state === 2) { t.selFrame = f; this.sel.push(t); }
+    else this.request(t, dist, f, true);
+    // Proteger ancestros: no deben evictarse mientras un descendiente está seleccionado
+    for (let p = t.parent; p; p = p.parent) p.protectFrame = f;
+  }
   ready(k, d) {
-    if (d > 6 || !this.inView(k)) return true;
+    if (d > 6) return true;
+    // Fuera de vista ampliada (radio +10 %): se considera listo para no bloquear el refinamiento del padre
+    const c = this.local(k, this._c2); this._s.center.copy(c); this._s.radius = k.radius * 1.1;
+    if (!this.frustum.intersectsSphere(this._s)) return true;
     if (k.external) return k.state === 2 && k.children.every(c => this.ready(c, d + 1));
-    if (k.uri) return k.state === 2;                 // fallido/pendiente → el padre sigue visible (sin huecos)
+    if (k.uri) return k.state === 2;                 // fallido (3) o pendiente → el padre sigue visible (sin huecos)
     return k.children.every(c => this.ready(c, d + 1));
   }
   prefetch(k, f, d) {
-    if (d > 6 || !this.inView(k)) return;
-    if (k.uri && !(k.external && k.state === 2)) { if (k.state !== 2) this.request(k, this.dist(k), f, true); if (!k.external) return; }   // los hijos de un tile en refinamiento hacen falta: needed
+    if (d > 6) return;
+    const c = this.local(k, this._c2); this._s.center.copy(c); this._s.radius = k.radius * 1.1;
+    if (!this.frustum.intersectsSphere(this._s)) return;
+    if (k.uri && !(k.external && k.state === 2)) { if (k.state !== 2) this.request(k, this.dist(k), f, true); if (!k.external) return; }
     for (const c of k.children) this.prefetch(c, f, d + 1);
   }
   // ---------- red ----------
@@ -228,16 +247,22 @@ export class Tileset3D {
   }
   // ---------- caché ----------
   freeHolder(h, meshes) { h.parent && h.parent.remove(h); (meshes || []).forEach(m => { m.geometry.dispose(); m.material.map && m.material.map.dispose(); m.material.dispose(); }); }
-  free(t) { this.bytes -= t.bytes; this.texCount -= t.tex || 0; this.freeHolder(t.holder, t.meshes); t.holder = null; t.meshes = null; t.state = 0; this.loaded.delete(t); }
-  evictOne(f) {                              // expulsa el tile oculto menos usado (nunca uno visible en este frame)
+  free(t) { this.bytes -= t.bytes; this.texCount -= t.tex || 0; this.freeHolder(t.holder, t.meshes); t.holder = null; t.meshes = null; t.state = 0; t._refined = false; this.loaded.delete(t); }
+  // Uso reciente: selección, carga o protección como fallback de refinamiento
+  _use(t) { return Math.max(t.selFrame || 0, t.loadedFrame || 0, t.protectFrame || 0); }
+  evictOne(f) {                              // expulsa el tile oculto menos usado (nunca uno visible/protegido reciente)
     let best = null, bu = Infinity;
-    for (const t of this.loaded) { const u = Math.max(t.selFrame, t.loadedFrame || 0); if (u >= f - 60) continue; if (u < bu) { bu = u; best = t; } }   // solo tiles sin uso en ~1 s
+    for (const t of this.loaded) {
+      const u = this._use(t);
+      if (u >= f - 90) continue;             // ~1.5 s de gracia para seleccionados y padres-fallback
+      if (u < bu) { bu = u; best = t; }
+    }
     if (!best) return false; this.free(best); this.evicted++; return true;
   }
   evict(f) {
     if (this.loaded.size <= this.maxTiles && this.bytes <= this.maxBytes) return;
     if (this.texCount <= this.minTex) return;                 // mínimo de texturas: por debajo no se limpia nada
-    const use = t => Math.max(t.selFrame, t.loadedFrame || 0), c = [...this.loaded].filter(t => use(t) < f - 90).sort((a, b) => use(a) - use(b));
+    const c = [...this.loaded].filter(t => this._use(t) < f - 120).sort((a, b) => this._use(a) - this._use(b));
     for (const t of c) { if (this.texCount - (t.tex || 0) < this.minTex) break; if (this.loaded.size <= this.maxTiles * .85 && this.bytes <= this.maxBytes * .85) break; this.free(t); this.evicted++; }
   }
   // ---------- terreno ----------
